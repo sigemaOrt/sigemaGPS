@@ -7,9 +7,11 @@ import java.time.LocalDate;
 import java.util.List;
 
 public interface IPosicionService {
-    public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) throws Exception;
-    public Posicion Crear(Posicion posicion) throws Exception;
-    public ReporteFinViaje obtenerReporteViaje(Long idEquipo, LocalDate fecha) throws Exception;
-    public boolean estaEnUso(Long idEquipo) throws Exception;
-    public void setEnUso(Long idEquipo, boolean enUso) throws Exception;
+    List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) throws Exception;
+    ReporteFinViaje obtenerReporteViaje(Long idEquipo, LocalDate fecha) throws Exception;
+    boolean estaEnUso(Long idEquipo) throws Exception;
+    void setEnUso(Long idEquipo, boolean enUso) throws Exception;
+    void iniciarTrabajo(Long idEquipo) throws Exception;
+    void finalizarTrabajo(Long idEquipo) throws Exception;
+    void eliminarTrabajo(Long idEquipo) throws Exception;
 }

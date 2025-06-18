@@ -24,6 +24,12 @@ public class Posicion implements Serializable, Comparable<Posicion> {
     @Column(nullable = false)
     private Date fecha;
 
+    @Column(nullable = false)
+    private boolean fin;
+
+
+
+
     public Long getId() {
         return id;
     }
@@ -62,6 +68,14 @@ public class Posicion implements Serializable, Comparable<Posicion> {
 
     public void setFecha(Date fecha) {
         this.fecha = fecha;
+    }
+
+    public boolean isFin() {
+        return fin;
+    }
+
+    public void setFin(boolean fin) {
+        this.fin = fin;
     }
 
     @Override

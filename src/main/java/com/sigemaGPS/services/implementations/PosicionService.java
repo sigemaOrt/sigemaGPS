@@ -6,60 +6,96 @@ import com.sigemaGPS.repositories.IPosicionRepository;
 import com.sigemaGPS.utilidades.SigemaException;
 import com.sigemaGPS.services.IPosicionService;
 import jakarta.transaction.Transactional;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Transactional
 public class PosicionService implements IPosicionService {
 
-    private IPosicionRepository posicionRepository;
+    private final IPosicionRepository posicionRepository;
+
+    // Estados y timers de equipos
     private final Map<Long, Boolean> estadoEquipos = new ConcurrentHashMap<>();
+    private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
 
     public PosicionService(IPosicionRepository posicionRepository){
         this.posicionRepository = posicionRepository;
     }
 
     @Override
-    public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) throws Exception {
-        List<Posicion> posiciones = posicionRepository.findByIdEquipoAndFecha(idEquipo, fecha).orElse(null);
+    public void iniciarTrabajo(Long idEquipo) throws Exception {
+        registrarPosicion(idEquipo, false);
+        setEnUso(idEquipo, true);
 
-        if(posiciones == null){
-            posiciones = new ArrayList<>();
-        }
+        Timer timer = new Timer(true);
+        timersEquipos.put(idEquipo, timer);
 
-        Collections.sort(posiciones);
-
-        return posiciones;
+        timer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    registrarPosicion(idEquipo, false);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }, 15 * 60 * 1000, 15 * 60 * 1000); // cada 15 minutos
     }
 
     @Override
-    public Posicion Crear(Posicion posicion) throws Exception {
-        if(posicion.getIdEquipo() == null || posicion.getIdEquipo() <= 0){
-            throw new SigemaException("Debe ingresar un equipo");
-        }
+    public void finalizarTrabajo(Long idEquipo) throws Exception {
+        Timer timer = timersEquipos.remove(idEquipo);
+        if (timer != null) timer.cancel();
 
-        if(posicion.getLatitud() == 0){
-            throw new SigemaException("Debe ingresar la latitud");
-        }
-
-        if(posicion.getLongitud() == 0){
-            throw new SigemaException("Debe ingresar la longitud");
-        }
-
-        posicion = posicionRepository.save(posicion);
-        estadoEquipos.put(posicion.getIdEquipo(), true);
-
-        return posicion;
+        registrarPosicion(idEquipo, true);
+        setEnUso(idEquipo, false);
     }
+
+    @Override
+    public void eliminarTrabajo(Long idEquipo) throws Exception {
+        Timer timer = timersEquipos.remove(idEquipo);
+        if (timer != null) timer.cancel();
+
+        setEnUso(idEquipo, false);
+    }
+
+    private void registrarPosicion(Long idEquipo, boolean fin) throws Exception {
+        if (idEquipo == null || idEquipo <= 0)
+            throw new SigemaException("Debe ingresar un equipo");
+
+        double lat = 0;
+        double lon = 0;
+
+        if (lat == 0 || lon == 0)
+            throw new SigemaException("Debe ingresar la latitud y longitud");
+
+        Posicion posicion = new Posicion();
+        posicion.setIdEquipo(idEquipo);
+        posicion.setLatitud(lat);
+        posicion.setLongitud(lon);
+        posicion.setFin(fin);
+        posicion.setFecha(new Date());
+
+        posicionRepository.save(posicion);
+        estadoEquipos.put(idEquipo, true);
+    }
+
+    @Override
+    public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) throws Exception {
+        List<Posicion> posiciones = posicionRepository.findByIdEquipoAndFecha(idEquipo, fecha).orElse(new ArrayList<>());
+        posiciones.sort(Comparator.naturalOrder());
+        return posiciones;
+    }
+
 
     @Override
     public ReporteFinViaje obtenerReporteViaje(Long idEquipo, LocalDate fecha) throws Exception {
         List<Posicion> posiciones = obtenerTodasPorIdEquipo(idEquipo, fecha);
-        if (posiciones == null || posiciones.size() < 2) {
+        if (posiciones.size() < 2) {
             return new ReporteFinViaje(null, fecha, idEquipo, 0, 0);
         }
 
@@ -70,7 +106,6 @@ public class PosicionService implements IPosicionService {
 
         for (int i = 1; i < posiciones.size(); i++) {
             Posicion actual = posiciones.get(i);
-
             double distancia = calcularDistanciaKm(
                     anterior.getLatitud(), anterior.getLongitud(),
                     actual.getLatitud(), actual.getLongitud());
@@ -97,27 +132,21 @@ public class PosicionService implements IPosicionService {
     }
 
     @Override
-    public boolean estaEnUso(Long idEquipo) throws Exception{
-        if(!estadoEquipos.get(idEquipo)){
+    public boolean estaEnUso(Long idEquipo) throws Exception {
+        if (!estadoEquipos.getOrDefault(idEquipo, false)) {
             return false;
         }
 
         Posicion ultimaPosicion = posicionRepository.findFirstByIdEquipoOrderByFechaDesc(idEquipo).orElse(null);
-
-        if(ultimaPosicion == null){
+        if (ultimaPosicion == null) {
             estadoEquipos.put(idEquipo, false);
             return false;
         }
 
-        Date horaActual = new Date();
-        long diferenciaMillis = horaActual.getTime() - ultimaPosicion.getFecha().getTime();
-        long tiempoMaxSinUso = 15 * 60 * 1000;
+        long diferenciaMillis = new Date().getTime() - ultimaPosicion.getFecha().getTime();
+        boolean enUso = diferenciaMillis < 15 * 60 * 1000;
 
-        //Si la diferencia es mayor a 15 minutos significa que ya no esta en uso.
-
-        boolean enUso = diferenciaMillis < tiempoMaxSinUso;
         estadoEquipos.put(idEquipo, enUso);
-
         return enUso;
     }
 
@@ -125,7 +154,6 @@ public class PosicionService implements IPosicionService {
     public void setEnUso(Long idEquipo, boolean enUso) throws Exception {
         estadoEquipos.put(idEquipo, enUso);
     }
-
 
     private double calcularDistanciaKm(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371;
@@ -138,4 +166,3 @@ public class PosicionService implements IPosicionService {
         return R * c;
     }
 }
-
