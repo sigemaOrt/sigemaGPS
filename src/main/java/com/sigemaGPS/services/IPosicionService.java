@@ -11,7 +11,7 @@ public interface IPosicionService {
     ReporteFinViaje obtenerReporteViaje(Long idEquipo, LocalDate fecha) throws Exception;
     boolean estaEnUso(Long idEquipo) throws Exception;
     void setEnUso(Long idEquipo, boolean enUso) throws Exception;
-    void iniciarTrabajo(Long idEquipo) throws Exception;
-    void finalizarTrabajo(Long idEquipo) throws Exception;
+    void iniciarTrabajo(Long idEquipo, String jwtToken) throws Exception;
+    void finalizarTrabajo(Long idEquipo, String jwtToken) throws Exception;
     void eliminarTrabajo(Long idEquipo) throws Exception;
 }
