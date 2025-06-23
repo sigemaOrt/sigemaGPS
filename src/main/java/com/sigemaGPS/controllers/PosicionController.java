@@ -38,32 +38,11 @@ public class PosicionController {
         throw new RuntimeException("No se encontró el token JWT en el encabezado de autorización (Bearer Token).");
     }
 
-    // Obtener todas las posiciones por equipo y fecha
-    @GetMapping("/{idEquipo}")
-    public List<Posicion> obtenerTodasPorEquipoYFecha(
-            @PathVariable Long idEquipo,
-            @RequestParam("fecha") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) throws Exception {
-        return posicionService.obtenerTodasPorIdEquipo(idEquipo, fecha);
-    }
-
-    //  Obtener reporte de viaje por equipo y fecha
-    @GetMapping("/{idEquipo}/reporte")
-    public ReporteFinViaje obtenerReporteViaje(
-            @PathVariable Long idEquipo,
-            @RequestParam("fecha") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) throws Exception {
-        return posicionService.obtenerReporteViaje(idEquipo, fecha);
-    }
 
     // Saber si un equipo está en uso actualmente
     @GetMapping("/{idEquipo}/enUso")
     public boolean estaEnUso(@PathVariable Long idEquipo) throws Exception {
         return posicionService.estaEnUso(idEquipo);
-    }
-
-    // Establecer manualmente si un equipo está en uso o no
-    @PostMapping("/{idEquipo}/enUso")
-    public void setEnUso(@PathVariable Long idEquipo, @RequestParam boolean enUso) throws Exception {
-        posicionService.setEnUso(idEquipo, enUso);
     }
 
     // --- MODIFICADO: Ahora requiere el token JWT ---
@@ -97,16 +76,4 @@ public class PosicionController {
         }
     }
 
-    // Opcional: Si necesitas un endpoint para eliminar el trabajo
-    @DeleteMapping("/eliminarTrabajo/{idEquipo}")
-    public ResponseEntity<?> eliminarTrabajo(@PathVariable Long idEquipo) {
-        try {
-            posicionService.eliminarTrabajo(idEquipo);
-            return ResponseEntity.ok("Trabajo eliminado para el equipo " + idEquipo);
-        } catch (SigemaException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error al eliminar trabajo: " + e.getMessage());
-        }
-    }
 }
