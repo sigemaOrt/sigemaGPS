@@ -20,7 +20,6 @@ public class PosicionController {
 
     private final IPosicionService posicionService;
 
-
     @Autowired
     public PosicionController(IPosicionService posicionService) {
         this.posicionService = posicionService;
@@ -70,6 +69,4 @@ public class PosicionController {
             return ResponseEntity.internalServerError().body("Error interno al finalizar trabajo: " + e.getMessage());
         }
     }
-
-
 }
