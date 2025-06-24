@@ -1,34 +1,16 @@
 package com.sigemaGPS.models;
 
-import jakarta.persistence.*;
 import java.io.Serializable;
 import java.util.Date;
 
-@Entity
-@Table(name = "Posiciones")
 public class Posicion implements Serializable, Comparable<Posicion> {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
-    @Column(nullable = false)
     private Long idEquipo;
-
-    @Column(nullable = false)
     private double latitud;
-
-    @Column(nullable = false)
     private double longitud;
-
-    @Column(nullable = false)
     private Date fecha;
-
-    @Column(nullable = false)
     private boolean fin;
-
-
-
 
     public Long getId() {
         return id;
@@ -80,6 +62,6 @@ public class Posicion implements Serializable, Comparable<Posicion> {
 
     @Override
     public int compareTo(Posicion o) {
-        return getFecha().compareTo(o.getFecha());
+        return this.fecha.compareTo(o.getFecha());
     }
 }
