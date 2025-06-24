@@ -3,77 +3,70 @@ package com.sigemaGPS.controllers;
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
 import com.sigemaGPS.services.IPosicionService;
-import com.sigemaGPS.utilidades.SigemaException; // Importar para manejar excepciones específicas
+import com.sigemaGPS.utilidades.SigemaException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.ResponseEntity; // Para devolver respuestas HTTP más informativas
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import jakarta.servlet.http.HttpServletRequest; // Para obtener el token JWT del encabezado
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.time.LocalDate;
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/posiciones")
-@CrossOrigin(origins = "*") // ¡Importante! Asegúrate de que tu frontend pueda acceder. Ajustar en producción.
+@CrossOrigin(origins = "*")
 public class PosicionController {
 
     private final IPosicionService posicionService;
-    private final HttpServletRequest request; // Inyectar HttpServletRequest para acceder a los encabezados
 
     @Autowired
-    public PosicionController(IPosicionService posicionService, HttpServletRequest request) {
+    public PosicionController(IPosicionService posicionService) {
         this.posicionService = posicionService;
-        this.request = request;
     }
 
-    // --- Nuevo método auxiliar para extraer el token JWT ---
-    private String getTokenFromRequest() {
+
+    private String getTokenFromRequest(HttpServletRequest request) {
         String authHeader = request.getHeader("Authorization");
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            return authHeader.substring(7); // Extrae el token después de "Bearer "
+            return authHeader.substring(7);
         }
-        // Puedes lanzar una excepción más específica o devolver null/vacío y manejarlo en el controlador.
-        // Lanzar una RuntimeException es una opción si el token es *siempre* esperado.
         throw new RuntimeException("No se encontró el token JWT en el encabezado de autorización (Bearer Token).");
     }
 
-
-    // Saber si un equipo está en uso actualmente
     @GetMapping("/{idEquipo}/enUso")
     public boolean estaEnUso(@PathVariable Long idEquipo) throws Exception {
         return posicionService.estaEnUso(idEquipo);
     }
 
-    // --- MODIFICADO: Ahora requiere el token JWT ---
     @PostMapping("/iniciarTrabajo/{idEquipo}")
-    public ResponseEntity<?> iniciarTrabajo(@PathVariable Long idEquipo) {
+    public ResponseEntity<?> iniciarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
         try {
-            String jwtToken = getTokenFromRequest(); // Obtiene el token del encabezado
-            posicionService.iniciarTrabajo(idEquipo, jwtToken); // Pasa el token al servicio
+            String jwtToken = getTokenFromRequest(request); // Pasa el request al método
+            posicionService.iniciarTrabajo(idEquipo, jwtToken);
             return ResponseEntity.ok("Trabajo iniciado exitosamente para el equipo " + idEquipo);
         } catch (SigemaException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (RuntimeException e) { // Captura si el token no se encuentra
-            return ResponseEntity.status(401).body(e.getMessage()); // 401 Unauthorized
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(401).body(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error interno al iniciar trabajo: " + e.getMessage());
         }
     }
 
+
     @PostMapping("/finalizarTrabajo/{idEquipo}")
-    public ResponseEntity<?> finalizarTrabajo(@PathVariable Long idEquipo) {
+    public ResponseEntity<?> finalizarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
         try {
-            String jwtToken = getTokenFromRequest(); // Obtiene el token del encabezado
-            posicionService.finalizarTrabajo(idEquipo, jwtToken); // Pasa el token al servicio
+            String jwtToken = getTokenFromRequest(request); // Pasa el request al método
+            posicionService.finalizarTrabajo(idEquipo, jwtToken);
             return ResponseEntity.ok("Trabajo finalizado exitosamente para el equipo " + idEquipo);
         } catch (SigemaException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (RuntimeException e) { // Captura si el token no se encuentra
-            return ResponseEntity.status(401).body(e.getMessage()); // 401 Unauthorized
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(401).body(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error interno al finalizar trabajo: " + e.getMessage());
         }
     }
-
 }

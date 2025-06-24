@@ -1,48 +1,53 @@
-// appsigemagps/src/main/java/com/sigemaGPS/services/implementations/PosicionService.java
 package com.sigemaGPS.services.implementations;
 
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
-import com.sigemaGPS.repositories.IPosicionRepository;
 import com.sigemaGPS.utilidades.SigemaException;
 import com.sigemaGPS.services.IPosicionService;
 import com.sigemaGPS.models.EquipoSigema;
-import com.sigemaGPS.Dto.ReporteSigemaDTO; // Importar el nuevo DTO
-import jakarta.transaction.Transactional;
+import com.sigemaGPS.Dto.ReporteSigemaDTO;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus; // Para verificar el estado HTTP de la respuesta
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+
 
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
-@Transactional
 public class PosicionService implements IPosicionService {
 
-    private final IPosicionRepository posicionRepository;
     private final RestTemplate restTemplate;
+    private final Map<Long, Boolean> estadoEquipos = new ConcurrentHashMap<>();
+    private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
+    private final Map<Long, List<Posicion>> posicionesPorEquipo = new ConcurrentHashMap<>();
 
+    //  Verificar que la propiedad se inyecte correctamente
     @Value("${sigema.backend.url}")
     private String sigemaBackendUrl;
 
-    private final Map<Long, Boolean> estadoEquipos = new ConcurrentHashMap<>();
-    private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
-
-    public PosicionService(IPosicionRepository posicionRepository, RestTemplate restTemplate){
-        this.posicionRepository = posicionRepository;
+    public PosicionService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
+    }
+
+    // Agregar método para verificar que la propiedad se cargó
+    @PostConstruct
+    public void init() {
+        System.out.println("=== CONFIGURACIÓN CARGADA ===");
+        System.out.println("sigema.backend.url = " + sigemaBackendUrl);
+        if (sigemaBackendUrl == null || sigemaBackendUrl.isEmpty()) {
+            throw new RuntimeException("La propiedad sigema.backend.url no está configurada correctamente");
+        }
     }
 
     @Override
     public void iniciarTrabajo(Long idEquipo, String jwtToken) throws Exception {
+        System.out.println("Iniciando trabajo para equipo: " + idEquipo + " con token: " +
+                (jwtToken != null ? jwtToken.substring(0, Math.min(10, jwtToken.length())) + "..." : "null"));
+
         registrarPosicion(idEquipo, false, jwtToken);
         setEnUso(idEquipo, true);
 
@@ -56,7 +61,6 @@ public class PosicionService implements IPosicionService {
                     registrarPosicion(idEquipo, false, jwtToken);
                 } catch (Exception e) {
                     System.err.println("Error al registrar posición periódica para equipo " + idEquipo + ": " + e.getMessage());
-                    e.printStackTrace();
                 }
             }
         }, 15 * 60 * 1000, 15 * 60 * 1000);
@@ -64,223 +68,155 @@ public class PosicionService implements IPosicionService {
 
     @Override
     public void finalizarTrabajo(Long idEquipo, String jwtToken) throws Exception {
+        System.out.println("Finalizando trabajo para equipo: " + idEquipo);
+
         Timer timer = timersEquipos.remove(idEquipo);
         if (timer != null) timer.cancel();
 
-        // Registramos la última posición
         registrarPosicion(idEquipo, true, jwtToken);
         setEnUso(idEquipo, false);
 
-        try {
-            // 1. Obtener el reporte de viaje calculado
-            // Si la fecha del reporte es la actual o la fecha de inicio del trabajo.
-            // Para simplicidad, usaremos la fecha actual para el cálculo.
-            // En un sistema real, querrías calcular el reporte para el día en que inició el trabajo
-            // o el período que abarcó.
-            ReporteFinViaje reporteCalculado = obtenerReporteViaje(idEquipo, LocalDate.now());
-
-            // 2. Mapear el ReporteFinViaje interno a un ReporteSigemaDTO
-            if (reporteCalculado != null && reporteCalculado.getUltimaPosicion() != null) {
-                ReporteSigemaDTO reporteParaSigema = new ReporteSigemaDTO(
-                        reporteCalculado.getIdEquipo(),
-                        reporteCalculado.getUltimaPosicion().getLatitud(),
-                        reporteCalculado.getUltimaPosicion().getLongitud(),
-                        reporteCalculado.getUltimaPosicion().getFecha(), // Usamos la fecha de la última posición
-                        reporteCalculado.getTotalHoras(),
-                        reporteCalculado.getTotalKMs()
-                );
-
-                // 3. Enviar el DTO del reporte a Sigema
-                enviarReporteASigema(reporteParaSigema, jwtToken);
-                System.out.println("Reporte de fin de viaje enviado a Sigema para equipo " + idEquipo);
-            } else {
-                System.out.println("No se generó un reporte válido para enviar a Sigema para el equipo " + idEquipo);
-            }
-        } catch (Exception e) {
-            System.err.println("Error al enviar el reporte a Sigema al finalizar el trabajo para el equipo " + idEquipo + ": " + e.getMessage());
+        ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
+        if (reporte != null && reporte.getUltimaPosicion() != null) {
+            ReporteSigemaDTO dto = new ReporteSigemaDTO(
+                    idEquipo,
+                    reporte.getUltimaPosicion().getLatitud(),
+                    reporte.getUltimaPosicion().getLongitud(),
+                    reporte.getUltimaPosicion().getFecha(),
+                    reporte.getTotalHoras(),
+                    reporte.getTotalKMs()
+            );
+            enviarReporteASigema(dto, jwtToken);
         }
-
     }
 
     @Override
     public void eliminarTrabajo(Long idEquipo) throws Exception {
         Timer timer = timersEquipos.remove(idEquipo);
         if (timer != null) timer.cancel();
-
         setEnUso(idEquipo, false);
     }
 
     private void registrarPosicion(Long idEquipo, boolean fin, String jwtToken) throws Exception {
-        if (idEquipo == null || idEquipo <= 0) {
-            throw new SigemaException("Debe ingresar un equipo válido (ID mayor a 0).");
-        }
+        String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
+        System.out.println("Registrando posición en URL: " + url);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(jwtToken);
+        HttpEntity<String> entity = new HttpEntity<>(headers);
 
         double lat;
         double lon;
 
         try {
-            String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(jwtToken);
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-
             ResponseEntity<EquipoSigema> response = restTemplate.exchange(url, HttpMethod.GET, entity, EquipoSigema.class);
+            EquipoSigema equipo = response.getBody();
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                EquipoSigema equipoSigema = response.getBody();
-                lat = equipoSigema.getLatitud();
-                lon = equipoSigema.getLongitud();
-            } else {
-                throw new SigemaException("No se pudo obtener la posición del equipo " + idEquipo + " desde Sigema. Código de estado: " + response.getStatusCode());
-            }
-        } catch (HttpClientErrorException e) {
-            String errorMessage = "Error al comunicarse con el backend Sigema para el equipo " + idEquipo + ". ";
-            switch (e.getStatusCode().value()) {
-                case 401:
-                    errorMessage += "Acceso no autorizado. El token JWT podría ser inválido o expirar.";
-                    break;
-                case 404:
-                    errorMessage += "Equipo no encontrado en Sigema.";
-                    break;
-                default:
-                    errorMessage += "Estado HTTP: " + e.getStatusCode().value() + ". Mensaje: " + e.getMessage();
-                    break;
-            }
-            throw new SigemaException(errorMessage);
+            if (equipo == null) throw new SigemaException("Equipo no encontrado");
+            lat = equipo.getLatitud();
+            lon = equipo.getLongitud();
+
+            System.out.println("Posición obtenida - Lat: " + lat + ", Lon: " + lon);
         } catch (Exception e) {
-            throw new SigemaException("Error inesperado al obtener la posición del equipo " + idEquipo + " de Sigema: " + e.getMessage());
-        }
-
-        if (lat == 0 && lon == 0) {
-            throw new SigemaException("No se pudo obtener una latitud y longitud válidas para el equipo " + idEquipo + " de Sigema.");
+            System.err.println("Error al obtener posición del equipo: " + e.getMessage());
+            throw new SigemaException("Error al obtener la posición del equipo: " + e.getMessage());
         }
 
         Posicion posicion = new Posicion();
         posicion.setIdEquipo(idEquipo);
         posicion.setLatitud(lat);
         posicion.setLongitud(lon);
-        posicion.setFin(fin);
         posicion.setFecha(new Date());
+        posicion.setFin(fin);
 
-        posicionRepository.save(posicion);
+        posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicion);
         estadoEquipos.put(idEquipo, true);
     }
 
-    /**
-     * Envía un reporte de trabajo al backend Sigema.
-     * @param reporte El DTO del reporte a enviar.
-     * @param jwtToken El token JWT para autenticarse con el backend Sigema.
-     * @throws SigemaException Si ocurre un error al enviar el reporte.
-     */
     private void enviarReporteASigema(ReporteSigemaDTO reporte, String jwtToken) throws SigemaException {
         try {
-            String url = sigemaBackendUrl + "/api/reporte"; // Endpoint de creación de reportes en Sigema
+            String url = sigemaBackendUrl + "/api/reporte";
+            System.out.println("Enviando reporte a URL: " + url);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(jwtToken);
-            headers.add(HttpHeaders.CONTENT_TYPE, "application/json"); // Asegurar que el tipo de contenido sea JSON
-            HttpEntity<ReporteSigemaDTO> requestEntity = new HttpEntity<>(reporte, headers);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<ReporteSigemaDTO> request = new HttpEntity<>(reporte, headers);
+            restTemplate.exchange(url, HttpMethod.POST, request, Void.class);
 
-            // Realizar la petición POST
-            ResponseEntity<Void> response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, Void.class);
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new SigemaException("Fallo al enviar el reporte a Sigema. Código de estado: " + response.getStatusCode());
-            }
-        } catch (HttpClientErrorException e) {
-            String errorMessage = "Error de cliente HTTP al enviar reporte a Sigema: " + e.getStatusCode().value();
-            if (e.getMessage() != null && !e.getMessage() .isEmpty()) {
-                errorMessage += ". Detalles: " + e.getMessage() ;
-            }
-            throw new SigemaException(errorMessage);
+            System.out.println("Reporte enviado exitosamente");
         } catch (Exception e) {
-            throw new SigemaException("Error inesperado al enviar el reporte a Sigema: " + e.getMessage());
+            System.err.println("Error al enviar reporte: " + e.getMessage());
+            throw new SigemaException("Error al enviar reporte: " + e.getMessage());
         }
     }
 
-    // --- Métodos existentes (obtenerTodasPorIdEquipo, obtenerReporteViaje, estaEnUso, setEnUso, calcularDistanciaKm) ---
-    // No necesitan cambios, ya que los incluyes en tu pregunta.
-    // Solo asegúrate de que el ReporteFinViaje se mapee correctamente al ReporteSigemaDTO.
-
     @Override
-    public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) throws Exception {
-        List<Posicion> posiciones = posicionRepository.findByIdEquipoAndFecha(idEquipo, fecha).orElse(new ArrayList<>());
-        posiciones.sort(Comparator.naturalOrder());
-        return posiciones;
-    }
+    public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) {
+        List<Posicion> todas = posicionesPorEquipo.getOrDefault(idEquipo, new ArrayList<>());
+        List<Posicion> filtradas = new ArrayList<>();
 
+        for (Posicion p : todas) {
+            if (p.getFecha().toInstant().atZone(TimeZone.getDefault().toZoneId()).toLocalDate().equals(fecha)) {
+                filtradas.add(p);
+            }
+        }
+
+        filtradas.sort(Comparator.naturalOrder());
+        return filtradas;
+    }
 
     @Override
     public ReporteFinViaje obtenerReporteViaje(Long idEquipo, LocalDate fecha) throws Exception {
         List<Posicion> posiciones = obtenerTodasPorIdEquipo(idEquipo, fecha);
-        if (posiciones.size() < 2) {
-            return new ReporteFinViaje(null, fecha, idEquipo, 0, 0);
-        }
+        if (posiciones.size() < 2) return new ReporteFinViaje(null, fecha, idEquipo, 0, 0);
 
         double totalKm = 0;
-        long tiempoUsoMillis = 0;
-
-        Posicion anterior = posiciones.getFirst();
+        long tiempoUso = 0;
+        Posicion anterior = posiciones.get(0);
 
         for (int i = 1; i < posiciones.size(); i++) {
             Posicion actual = posiciones.get(i);
-            double distancia = calcularDistanciaKm(
-                    anterior.getLatitud(), anterior.getLongitud(),
-                    actual.getLatitud(), actual.getLongitud());
+            double distancia = calcularDistanciaKm(anterior.getLatitud(), anterior.getLongitud(), actual.getLatitud(), actual.getLongitud());
+            long tiempo = actual.getFecha().getTime() - anterior.getFecha().getTime();
 
-            long tiempoEntrePuntos = actual.getFecha().getTime() - anterior.getFecha().getTime();
-
-            if (distancia >= 0.01 || tiempoEntrePuntos < 30 * 60 * 1000) {
+            if (distancia >= 0.01 || tiempo < 30 * 60 * 1000) {
                 totalKm += distancia;
-                tiempoUsoMillis += tiempoEntrePuntos;
+                tiempoUso += tiempo;
             }
 
             anterior = actual;
         }
 
-        double horasUso = tiempoUsoMillis / (1000.0 * 60 * 60);
-
-        return new ReporteFinViaje(
-                posiciones.getLast(),
-                fecha,
-                idEquipo,
-                horasUso,
-                totalKm
-        );
+        double horas = tiempoUso / (1000.0 * 60 * 60);
+        return new ReporteFinViaje(posiciones.get(posiciones.size() - 1), fecha, idEquipo, horas, totalKm);
     }
 
     @Override
-    public boolean estaEnUso(Long idEquipo) throws Exception {
-        if (!estadoEquipos.getOrDefault(idEquipo, false)) {
-            return false;
-        }
+    public boolean estaEnUso(Long idEquipo) {
+        if (!estadoEquipos.getOrDefault(idEquipo, false)) return false;
+        List<Posicion> posiciones = posicionesPorEquipo.getOrDefault(idEquipo, new ArrayList<>());
+        if (posiciones.isEmpty()) return false;
 
-        Posicion ultimaPosicion = posicionRepository.findFirstByIdEquipoOrderByFechaDesc(idEquipo).orElse(null);
-        if (ultimaPosicion == null) {
-            estadoEquipos.put(idEquipo, false);
-            return false;
-        }
-
-        long diferenciaMillis = new Date().getTime() - ultimaPosicion.getFecha().getTime();
-        boolean enUso = diferenciaMillis < 15 * 60 * 1000;
-
+        Posicion ultima = posiciones.get(posiciones.size() - 1);
+        long diff = new Date().getTime() - ultima.getFecha().getTime();
+        boolean enUso = diff < 15 * 60 * 1000;
         estadoEquipos.put(idEquipo, enUso);
         return enUso;
     }
 
     @Override
-    public void setEnUso(Long idEquipo, boolean enUso) throws Exception {
+    public void setEnUso(Long idEquipo, boolean enUso) {
         estadoEquipos.put(idEquipo, enUso);
     }
 
     private double calcularDistanciaKm(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371;
-        double latDistance = Math.toRadians(lat2 - lat1);
-        double lonDistance = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                        Math.sin(dLon/2) * Math.sin(dLon/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 }
