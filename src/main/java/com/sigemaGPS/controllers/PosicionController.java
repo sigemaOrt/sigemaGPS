@@ -35,30 +35,10 @@ public class PosicionController {
         throw new RuntimeException("No se encontró el token JWT en el encabezado de autorización (Bearer Token).");
     }
 
-    @GetMapping("/{idEquipo}")
-    public List<Posicion> obtenerTodasPorEquipoYFecha(
-            @PathVariable Long idEquipo,
-            @RequestParam("fecha") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) throws Exception {
-        return posicionService.obtenerTodasPorIdEquipo(idEquipo, fecha);
-    }
-
-    @GetMapping("/{idEquipo}/reporte")
-    public ReporteFinViaje obtenerReporteViaje(
-            @PathVariable Long idEquipo,
-            @RequestParam("fecha") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) throws Exception {
-        return posicionService.obtenerReporteViaje(idEquipo, fecha);
-    }
-
     @GetMapping("/{idEquipo}/enUso")
     public boolean estaEnUso(@PathVariable Long idEquipo) throws Exception {
         return posicionService.estaEnUso(idEquipo);
     }
-
-    @PostMapping("/{idEquipo}/enUso")
-    public void setEnUso(@PathVariable Long idEquipo, @RequestParam boolean enUso) throws Exception {
-        posicionService.setEnUso(idEquipo, enUso);
-    }
-
 
     @PostMapping("/iniciarTrabajo/{idEquipo}")
     public ResponseEntity<?> iniciarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
@@ -91,15 +71,5 @@ public class PosicionController {
         }
     }
 
-    @DeleteMapping("/eliminarTrabajo/{idEquipo}")
-    public ResponseEntity<?> eliminarTrabajo(@PathVariable Long idEquipo) {
-        try {
-            posicionService.eliminarTrabajo(idEquipo);
-            return ResponseEntity.ok("Trabajo eliminado para el equipo " + idEquipo);
-        } catch (SigemaException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error al eliminar trabajo: " + e.getMessage());
-        }
-    }
+
 }
