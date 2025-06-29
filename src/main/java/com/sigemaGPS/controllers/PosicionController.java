@@ -1,17 +1,16 @@
 package com.sigemaGPS.controllers;
 
+import com.sigemaGPS.Dto.ReporteSigemaDTO;
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
 import com.sigemaGPS.services.IPosicionService;
 import com.sigemaGPS.utilidades.SigemaException;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletRequest;
 
-import java.time.LocalDate;
-import java.util.List;
+
 
 @RestController
 @RequestMapping("/api/posiciones")
@@ -42,9 +41,9 @@ public class PosicionController {
     @PostMapping("/iniciarTrabajo/{idEquipo}")
     public ResponseEntity<?> iniciarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
         try {
-            String jwtToken = getTokenFromRequest(request); // Pasa el request al método
-            posicionService.iniciarTrabajo(idEquipo, jwtToken);
-            return ResponseEntity.ok("Trabajo iniciado exitosamente para el equipo " + idEquipo);
+            String jwtToken = getTokenFromRequest(request);
+            ReporteSigemaDTO dto = posicionService.iniciarTrabajo(idEquipo, jwtToken);
+            return ResponseEntity.ok(dto);
         } catch (SigemaException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         } catch (RuntimeException e) {
@@ -54,13 +53,12 @@ public class PosicionController {
         }
     }
 
-
     @PostMapping("/finalizarTrabajo/{idEquipo}")
     public ResponseEntity<?> finalizarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
         try {
-            String jwtToken = getTokenFromRequest(request); // Pasa el request al método
-            posicionService.finalizarTrabajo(idEquipo, jwtToken);
-            return ResponseEntity.ok("Trabajo finalizado exitosamente para el equipo " + idEquipo);
+            String jwtToken = getTokenFromRequest(request);
+            ReporteSigemaDTO dto = posicionService.finalizarTrabajo(idEquipo, jwtToken);
+            return ResponseEntity.ok(dto);
         } catch (SigemaException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         } catch (RuntimeException e) {
@@ -69,4 +67,5 @@ public class PosicionController {
             return ResponseEntity.internalServerError().body("Error interno al finalizar trabajo: " + e.getMessage());
         }
     }
+
 }

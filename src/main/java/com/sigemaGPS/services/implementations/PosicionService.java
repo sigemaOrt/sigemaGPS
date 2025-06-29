@@ -2,16 +2,17 @@ package com.sigemaGPS.services.implementations;
 
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
+import com.sigemaGPS.services.IJsonStorageService;
 import com.sigemaGPS.utilidades.SigemaException;
 import com.sigemaGPS.services.IPosicionService;
 import com.sigemaGPS.models.EquipoSigema;
 import com.sigemaGPS.Dto.ReporteSigemaDTO;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-
 
 import java.time.LocalDate;
 import java.util.*;
@@ -25,7 +26,7 @@ public class PosicionService implements IPosicionService {
     private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
     private final Map<Long, List<Posicion>> posicionesPorEquipo = new ConcurrentHashMap<>();
 
-    //  Verificar que la propiedad se inyecte correctamente
+
     @Value("${sigema.backend.url}")
     private String sigemaBackendUrl;
 
@@ -33,7 +34,6 @@ public class PosicionService implements IPosicionService {
         this.restTemplate = restTemplate;
     }
 
-    // Agregar método para verificar que la propiedad se cargó
     @PostConstruct
     public void init() {
         System.out.println("=== CONFIGURACIÓN CARGADA ===");
@@ -44,7 +44,7 @@ public class PosicionService implements IPosicionService {
     }
 
     @Override
-    public void iniciarTrabajo(Long idEquipo, String jwtToken) throws Exception {
+    public ReporteSigemaDTO iniciarTrabajo(Long idEquipo, String jwtToken) throws Exception {
         System.out.println("Iniciando trabajo para equipo: " + idEquipo + " con token: " +
                 (jwtToken != null ? jwtToken.substring(0, Math.min(10, jwtToken.length())) + "..." : "null"));
 
@@ -64,10 +64,27 @@ public class PosicionService implements IPosicionService {
                 }
             }
         }, 15 * 60 * 1000, 15 * 60 * 1000);
+
+        ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
+        if (reporte != null && reporte.getUltimaPosicion() != null) {
+            ReporteSigemaDTO dto = new ReporteSigemaDTO(
+                    idEquipo,
+                    reporte.getUltimaPosicion().getLatitud(),
+                    reporte.getUltimaPosicion().getLongitud(),
+                    reporte.getUltimaPosicion().getFecha(),
+                    reporte.getTotalHoras(),
+                    reporte.getTotalKMs()
+            );
+            enviarReporteASigema(dto, jwtToken);
+
+            return dto; // <-- devolvé el DTO para el controller
+        }
+        return null;
     }
 
+
     @Override
-    public void finalizarTrabajo(Long idEquipo, String jwtToken) throws Exception {
+    public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken) throws Exception {
         System.out.println("Finalizando trabajo para equipo: " + idEquipo);
 
         Timer timer = timersEquipos.remove(idEquipo);
@@ -87,8 +104,11 @@ public class PosicionService implements IPosicionService {
                     reporte.getTotalKMs()
             );
             enviarReporteASigema(dto, jwtToken);
+            return dto;
         }
+        return null;
     }
+
 
     @Override
     public void eliminarTrabajo(Long idEquipo) throws Exception {
@@ -107,10 +127,11 @@ public class PosicionService implements IPosicionService {
 
         double lat;
         double lon;
+        EquipoSigema equipo = null;
 
         try {
             ResponseEntity<EquipoSigema> response = restTemplate.exchange(url, HttpMethod.GET, entity, EquipoSigema.class);
-            EquipoSigema equipo = response.getBody();
+            equipo = response.getBody();
 
             if (equipo == null) throw new SigemaException("Equipo no encontrado");
             lat = equipo.getLatitud();
@@ -129,28 +150,33 @@ public class PosicionService implements IPosicionService {
         posicion.setFecha(new Date());
         posicion.setFin(fin);
 
+        // Guardar en memoria (existente)
         posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicion);
         estadoEquipos.put(idEquipo, true);
+
     }
 
     private void enviarReporteASigema(ReporteSigemaDTO reporte, String jwtToken) throws SigemaException {
         try {
-            String url = sigemaBackendUrl + "/api/reporte";
+            String url = sigemaBackendUrl + "/api/json-storage/reporte-final";
             System.out.println("Enviando reporte a URL: " + url);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(jwtToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<ReporteSigemaDTO> request = new HttpEntity<>(reporte, headers);
-            restTemplate.exchange(url, HttpMethod.POST, request, Void.class);
 
-            System.out.println("Reporte enviado exitosamente");
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, request, String.class);
+
+            System.out.println("Reporte enviado exitosamente al backend sigema main");
         } catch (Exception e) {
-            System.err.println("Error al enviar reporte: " + e.getMessage());
+            System.err.println("Error al enviar reporte al backend sigema: " + e.getMessage());
             throw new SigemaException("Error al enviar reporte: " + e.getMessage());
         }
     }
 
+
+    // Resto de métodos sin cambios...
     @Override
     public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) {
         List<Posicion> todas = posicionesPorEquipo.getOrDefault(idEquipo, new ArrayList<>());
