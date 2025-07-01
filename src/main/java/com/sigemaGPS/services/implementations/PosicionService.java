@@ -1,5 +1,6 @@
 package com.sigemaGPS.services.implementations;
 
+import com.sigemaGPS.Dto.PosicionClienteDTO;
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
 import com.sigemaGPS.services.IJsonStorageService;
@@ -15,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -22,16 +25,18 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PosicionService implements IPosicionService {
 
     private final RestTemplate restTemplate;
+    private final IJsonStorageService jsonStorageService;
     private final Map<Long, Boolean> estadoEquipos = new ConcurrentHashMap<>();
     private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
     private final Map<Long, List<Posicion>> posicionesPorEquipo = new ConcurrentHashMap<>();
 
-
     @Value("${sigema.backend.url}")
     private String sigemaBackendUrl;
 
-    public PosicionService(RestTemplate restTemplate) {
+    @Autowired
+    public PosicionService(RestTemplate restTemplate, IJsonStorageService jsonStorageService) {
         this.restTemplate = restTemplate;
+        this.jsonStorageService = jsonStorageService;
     }
 
     @PostConstruct
@@ -44,42 +49,38 @@ public class PosicionService implements IPosicionService {
     }
 
     @Override
-    public ReporteSigemaDTO iniciarTrabajo(Long idEquipo, String jwtToken) throws Exception {
-        System.out.println("Iniciando trabajo para equipo: " + idEquipo + " con token: " +
-                (jwtToken != null ? jwtToken.substring(0, Math.min(10, jwtToken.length())) + "..." : "null"));
+    public ReporteSigemaDTO iniciarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception {
+        System.out.println("Iniciando trabajo para equipo: " + idEquipo);
 
-        registrarPosicion(idEquipo, false, jwtToken);
+        double lat = ubicacion.getLatitud();
+        double lon = ubicacion.getLongitud();
+
+        Posicion posicion = new Posicion();
+        posicion.setIdEquipo(idEquipo);
+        posicion.setLatitud(lat);
+        posicion.setLongitud(lon);
+        posicion.setFecha(new Date());
+        posicion.setFin(false);
+
+        posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicion);
         setEnUso(idEquipo, true);
+
+        jsonStorageService.iniciarViaje(idEquipo, posicion, null);
 
         Timer timer = new Timer(true);
         timersEquipos.put(idEquipo, timer);
-
         timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
                 try {
-                    registrarPosicion(idEquipo, false, jwtToken);
+                    registrarPosicionConJSON(idEquipo, false, jwtToken, false);
                 } catch (Exception e) {
                     System.err.println("Error al registrar posición periódica para equipo " + idEquipo + ": " + e.getMessage());
                 }
             }
         }, 15 * 60 * 1000, 15 * 60 * 1000);
 
-        ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
-        if (reporte != null && reporte.getUltimaPosicion() != null) {
-            ReporteSigemaDTO dto = new ReporteSigemaDTO(
-                    idEquipo,
-                    reporte.getUltimaPosicion().getLatitud(),
-                    reporte.getUltimaPosicion().getLongitud(),
-                    reporte.getUltimaPosicion().getFecha(),
-                    reporte.getTotalHoras(),
-                    reporte.getTotalKMs()
-            );
-            enviarReporteASigema(dto, jwtToken);
-
-            return dto; // <-- devolvé el DTO para el controller
-        }
-        return null;
+        return new ReporteSigemaDTO(idEquipo, lat, lon, posicion.getFecha(), 0.0, 0.0);
     }
 
 
@@ -87,15 +88,21 @@ public class PosicionService implements IPosicionService {
     public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken) throws Exception {
         System.out.println("Finalizando trabajo para equipo: " + idEquipo);
 
+        // Cancelar timer
         Timer timer = timersEquipos.remove(idEquipo);
         if (timer != null) timer.cancel();
 
-        registrarPosicion(idEquipo, true, jwtToken);
+        // Registrar posición final
+        registrarPosicionConJSON(idEquipo, true, jwtToken, false);
         setEnUso(idEquipo, false);
 
+        // Finalizar archivo JSON (renombrar de "enCurso" a "finalizado")
+        jsonStorageService.finalizarViaje(idEquipo);
+
+        // Generar reporte para devolver pero no enviar
         ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
         if (reporte != null && reporte.getUltimaPosicion() != null) {
-            ReporteSigemaDTO dto = new ReporteSigemaDTO(
+            return new ReporteSigemaDTO(
                     idEquipo,
                     reporte.getUltimaPosicion().getLatitud(),
                     reporte.getUltimaPosicion().getLongitud(),
@@ -103,12 +110,9 @@ public class PosicionService implements IPosicionService {
                     reporte.getTotalHoras(),
                     reporte.getTotalKMs()
             );
-            enviarReporteASigema(dto, jwtToken);
-            return dto;
         }
         return null;
     }
-
 
     @Override
     public void eliminarTrabajo(Long idEquipo) throws Exception {
@@ -117,7 +121,7 @@ public class PosicionService implements IPosicionService {
         setEnUso(idEquipo, false);
     }
 
-    private void registrarPosicion(Long idEquipo, boolean fin, String jwtToken) throws Exception {
+    private void registrarPosicionConJSON(Long idEquipo, boolean fin, String jwtToken, boolean inicioViaje) throws Exception {
         String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
         System.out.println("Registrando posición en URL: " + url);
 
@@ -150,31 +154,17 @@ public class PosicionService implements IPosicionService {
         posicion.setFecha(new Date());
         posicion.setFin(fin);
 
-        // Guardar en memoria (existente)
+        // Guardar en memoria
         posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicion);
         estadoEquipos.put(idEquipo, true);
 
-    }
-
-    private void enviarReporteASigema(ReporteSigemaDTO reporte, String jwtToken) throws SigemaException {
-        try {
-            String url = sigemaBackendUrl + "/api/json-storage/reporte-final";
-            System.out.println("Enviando reporte a URL: " + url);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(jwtToken);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<ReporteSigemaDTO> request = new HttpEntity<>(reporte, headers);
-
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, request, String.class);
-
-            System.out.println("Reporte enviado exitosamente al backend sigema main");
-        } catch (Exception e) {
-            System.err.println("Error al enviar reporte al backend sigema: " + e.getMessage());
-            throw new SigemaException("Error al enviar reporte: " + e.getMessage());
+        // Guardar en JSON según la nomenclatura requerida
+        if (inicioViaje) {
+            jsonStorageService.iniciarViaje(idEquipo, posicion, equipo);
+        } else {
+            jsonStorageService.agregarPosicionAViaje(idEquipo, posicion, equipo);
         }
     }
-
 
     // Resto de métodos sin cambios...
     @Override

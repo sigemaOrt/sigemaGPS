@@ -1,5 +1,6 @@
 package com.sigemaGPS.controllers;
 
+import com.sigemaGPS.Dto.PosicionClienteDTO;
 import com.sigemaGPS.Dto.ReporteSigemaDTO;
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
@@ -39,10 +40,13 @@ public class PosicionController {
     }
 
     @PostMapping("/iniciarTrabajo/{idEquipo}")
-    public ResponseEntity<?> iniciarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
+    public ResponseEntity<?> iniciarTrabajo(
+            @PathVariable Long idEquipo,
+            @RequestBody PosicionClienteDTO ubicacion,
+            HttpServletRequest request) {
         try {
             String jwtToken = getTokenFromRequest(request);
-            ReporteSigemaDTO dto = posicionService.iniciarTrabajo(idEquipo, jwtToken);
+            ReporteSigemaDTO dto = posicionService.iniciarTrabajo(idEquipo, jwtToken, ubicacion);
             return ResponseEntity.ok(dto);
         } catch (SigemaException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
