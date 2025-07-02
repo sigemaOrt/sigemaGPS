@@ -11,8 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletRequest;
 
-
-
 @RestController
 @RequestMapping("/api/posiciones")
 @CrossOrigin(origins = "*")
@@ -24,7 +22,6 @@ public class PosicionController {
     public PosicionController(IPosicionService posicionService) {
         this.posicionService = posicionService;
     }
-
 
     private String getTokenFromRequest(HttpServletRequest request) {
         String authHeader = request.getHeader("Authorization");
@@ -58,10 +55,13 @@ public class PosicionController {
     }
 
     @PostMapping("/finalizarTrabajo/{idEquipo}")
-    public ResponseEntity<?> finalizarTrabajo(@PathVariable Long idEquipo, HttpServletRequest request) {
+    public ResponseEntity<?> finalizarTrabajo(
+            @PathVariable Long idEquipo,
+            @RequestBody PosicionClienteDTO ubicacion,
+            HttpServletRequest request) {
         try {
             String jwtToken = getTokenFromRequest(request);
-            ReporteSigemaDTO dto = posicionService.finalizarTrabajo(idEquipo, jwtToken);
+            ReporteSigemaDTO dto = posicionService.finalizarTrabajo(idEquipo, jwtToken, ubicacion);
             return ResponseEntity.ok(dto);
         } catch (SigemaException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -71,5 +71,4 @@ public class PosicionController {
             return ResponseEntity.internalServerError().body("Error interno al finalizar trabajo: " + e.getMessage());
         }
     }
-
 }

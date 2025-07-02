@@ -85,33 +85,65 @@ public class PosicionService implements IPosicionService {
 
 
     @Override
-    public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken) throws Exception {
+    public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception {
         System.out.println("Finalizando trabajo para equipo: " + idEquipo);
 
         // Cancelar timer
         Timer timer = timersEquipos.remove(idEquipo);
         if (timer != null) timer.cancel();
 
-        // Registrar posición final
-        registrarPosicionConJSON(idEquipo, true, jwtToken, false);
+        // Crear la posición final con la ubicación del cliente
+        double lat = ubicacion.getLatitud();
+        double lon = ubicacion.getLongitud();
+
+        Posicion posicionFinal = new Posicion();
+        posicionFinal.setIdEquipo(idEquipo);
+        posicionFinal.setLatitud(lat);
+        posicionFinal.setLongitud(lon);
+        posicionFinal.setFecha(new Date());
+        posicionFinal.setFin(true);
+
+        // Agregar la posición final a la lista en memoria
+        posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicionFinal);
+
+        // Obtener información del equipo para el JSON
+        EquipoSigema equipo = null;
+        try {
+            String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(jwtToken);
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<EquipoSigema> response = restTemplate.exchange(url, HttpMethod.GET, entity, EquipoSigema.class);
+            equipo = response.getBody();
+        } catch (Exception e) {
+            System.err.println("Error al obtener información del equipo para finalización: " + e.getMessage());
+            // Continuamos sin la información del equipo
+        }
+
+        // Guardar la posición final en el JSON
+        jsonStorageService.agregarPosicionAViaje(idEquipo, posicionFinal, equipo);
+
         setEnUso(idEquipo, false);
 
         // Finalizar archivo JSON (renombrar de "enCurso" a "finalizado")
         jsonStorageService.finalizarViaje(idEquipo);
 
-        // Generar reporte para devolver pero no enviar
+        // Generar reporte para devolver
         ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
         if (reporte != null && reporte.getUltimaPosicion() != null) {
             return new ReporteSigemaDTO(
                     idEquipo,
-                    reporte.getUltimaPosicion().getLatitud(),
-                    reporte.getUltimaPosicion().getLongitud(),
-                    reporte.getUltimaPosicion().getFecha(),
+                    lat, // Usar la posición del cliente
+                    lon, // Usar la posición del cliente
+                    posicionFinal.getFecha(),
                     reporte.getTotalHoras(),
                     reporte.getTotalKMs()
             );
         }
-        return null;
+
+        // Si no hay reporte, devolver al menos la posición final
+        return new ReporteSigemaDTO(idEquipo, lat, lon, posicionFinal.getFecha(), 0.0, 0.0);
     }
 
     @Override
