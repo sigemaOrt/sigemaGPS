@@ -11,5 +11,6 @@ public class EquipoSigema {
     private Long id;
     private double latitud;
     private double longitud;
+    private String unidadMedida;
 
 }

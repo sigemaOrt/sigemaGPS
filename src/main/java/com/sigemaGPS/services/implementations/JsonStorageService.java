@@ -56,22 +56,24 @@ public class JsonStorageService implements IJsonStorageService {
 
     public void iniciarViaje(Long idEquipo, Posicion posicion, EquipoSigema equipoInfo) {
         try {
-            // Crear estructura del viaje
             Map<String, Object> viajeData = new HashMap<>();
             viajeData.put("idEquipo", idEquipo);
             viajeData.put("fechaInicio", new Date());
             viajeData.put("estado", "EN_CURSO");
 
-            // Información del equipo
             if (equipoInfo != null) {
                 Map<String, Object> equipoData = new HashMap<>();
                 equipoData.put("id", equipoInfo.getId());
                 equipoData.put("latitud", equipoInfo.getLatitud());
                 equipoData.put("longitud", equipoInfo.getLongitud());
+
+                if (equipoInfo.getUnidadMedida() != null) {
+                    equipoData.put("unidadMedida", equipoInfo.getUnidadMedida());
+                }
+
                 viajeData.put("equipoInfo", equipoData);
             }
 
-            // Lista de posiciones (iniciamos con la primera)
             List<Map<String, Object>> posiciones = new ArrayList<>();
             Map<String, Object> posicionData = new HashMap<>();
             posicionData.put("timestamp", posicion.getFecha());
@@ -82,7 +84,6 @@ public class JsonStorageService implements IJsonStorageService {
 
             viajeData.put("posiciones", posiciones);
 
-            // Crear archivo con nomenclatura: IDMAQUINA_enCurso.json
             String fileName = idEquipo + "_enCurso.json";
             File file = new File(jsonStoragePath, fileName);
 
@@ -101,12 +102,10 @@ public class JsonStorageService implements IJsonStorageService {
 
             if (!file.exists()) {
                 System.err.println("Archivo de viaje en curso no encontrado: " + fileName);
-                // Si no existe, lo creamos
                 iniciarViaje(idEquipo, posicion, equipoInfo);
                 return;
             }
 
-            // Leer archivo existente
             Map<String, Object> viajeData = objectMapper.readValue(file, Map.class);
             List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
 
@@ -115,7 +114,6 @@ public class JsonStorageService implements IJsonStorageService {
                 viajeData.put("posiciones", posiciones);
             }
 
-            // Agregar nueva posición
             Map<String, Object> posicionData = new HashMap<>();
             posicionData.put("timestamp", posicion.getFecha());
             posicionData.put("latitud", posicion.getLatitud());
@@ -123,19 +121,23 @@ public class JsonStorageService implements IJsonStorageService {
             posicionData.put("esFinal", posicion.isFin());
             posiciones.add(posicionData);
 
-            // Actualizar información del equipo si está disponible
+            // Actualizar información del equipo incluyendo la unidad de medida
             if (equipoInfo != null) {
                 Map<String, Object> equipoData = new HashMap<>();
                 equipoData.put("id", equipoInfo.getId());
                 equipoData.put("latitud", equipoInfo.getLatitud());
                 equipoData.put("longitud", equipoInfo.getLongitud());
+
+                // Guardar la unidad de medida del equipo
+                if (equipoInfo.getUnidadMedida() != null) {
+                    equipoData.put("unidadMedida", equipoInfo.getUnidadMedida());
+                }
+
                 viajeData.put("equipoInfo", equipoData);
             }
 
-            // Actualizar última modificación
             viajeData.put("ultimaActualizacion", new Date());
 
-            // Guardar archivo actualizado
             objectMapper.writeValue(file, viajeData);
             System.out.println("Posición agregada al viaje - Total posiciones: " + posiciones.size());
 
@@ -183,6 +185,28 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
+    // Método para obtener datos del viaje finalizado incluyendo la unidad de medida
+    public Map<String, Object> obtenerDatosViajeParaReporte(Long idEquipo, String fechaHora) {
+        try {
+            String fileName = idEquipo + "_finalizado_" + fechaHora + ".json";
+            File file = new File(jsonStoragePath, fileName);
+
+            if (!file.exists()) {
+                System.err.println("Archivo de viaje finalizado no encontrado: " + fileName);
+                return null;
+            }
+
+            Map<String, Object> viajeData = objectMapper.readValue(file, Map.class);
+            System.out.println("Datos del viaje obtenidos para reporte, incluyendo unidad de medida");
+
+            return viajeData;
+
+        } catch (IOException e) {
+            System.err.println("Error al obtener datos del viaje: " + e.getMessage());
+            return null;
+        }
+    }
+
     // Métodos originales mantenidos para compatibilidad
     @Override
     public void guardarPosicionEnJSON(Posicion posicion, EquipoSigema equipoInfo) {
@@ -197,6 +221,12 @@ public class JsonStorageService implements IJsonStorageService {
                 equipoData.put("id", equipoInfo.getId());
                 equipoData.put("latitud", equipoInfo.getLatitud());
                 equipoData.put("longitud", equipoInfo.getLongitud());
+
+                // Incluir unidad de medida
+                if (equipoInfo.getUnidadMedida() != null) {
+                    equipoData.put("unidadMedida", equipoInfo.getUnidadMedida());
+                }
+
                 posicionCompleta.put("equipo", equipoData);
             }
 

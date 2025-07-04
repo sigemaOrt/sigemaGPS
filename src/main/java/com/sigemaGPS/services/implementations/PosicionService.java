@@ -30,8 +30,9 @@ public class PosicionService implements IPosicionService {
     private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
     private final Map<Long, List<Posicion>> posicionesPorEquipo = new ConcurrentHashMap<>();
 
-    @Value("${sigema.backend.url}")
+    @Value("${sigema.main.backend.url}")
     private String sigemaBackendUrl;
+
 
     @Autowired
     public PosicionService(RestTemplate restTemplate, IJsonStorageService jsonStorageService) {
@@ -88,11 +89,9 @@ public class PosicionService implements IPosicionService {
     public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception {
         System.out.println("Finalizando trabajo para equipo: " + idEquipo);
 
-        // Cancelar timer
         Timer timer = timersEquipos.remove(idEquipo);
         if (timer != null) timer.cancel();
 
-        // Crear la posición final con la ubicación del cliente
         double lat = ubicacion.getLatitud();
         double lon = ubicacion.getLongitud();
 
@@ -103,10 +102,8 @@ public class PosicionService implements IPosicionService {
         posicionFinal.setFecha(new Date());
         posicionFinal.setFin(true);
 
-        // Agregar la posición final a la lista en memoria
         posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicionFinal);
 
-        // Obtener información del equipo para el JSON
         EquipoSigema equipo = null;
         try {
             String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
@@ -118,33 +115,65 @@ public class PosicionService implements IPosicionService {
             equipo = response.getBody();
         } catch (Exception e) {
             System.err.println("Error al obtener información del equipo para finalización: " + e.getMessage());
-            // Continuamos sin la información del equipo
         }
 
-        // Guardar la posición final en el JSON
         jsonStorageService.agregarPosicionAViaje(idEquipo, posicionFinal, equipo);
-
         setEnUso(idEquipo, false);
-
-        // Finalizar archivo JSON (renombrar de "enCurso" a "finalizado")
         jsonStorageService.finalizarViaje(idEquipo);
 
-        // Generar reporte para devolver
         ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
         if (reporte != null && reporte.getUltimaPosicion() != null) {
-            return new ReporteSigemaDTO(
+            ReporteSigemaDTO dto = new ReporteSigemaDTO(
                     idEquipo,
-                    lat, // Usar la posición del cliente
-                    lon, // Usar la posición del cliente
+                    lat,
+                    lon,
                     posicionFinal.getFecha(),
                     reporte.getTotalHoras(),
                     reporte.getTotalKMs()
             );
+
+            // 🟢 Enviar el reporte al backend principal
+            enviarReporteAlBackendPrincipal(dto, jwtToken);
+
+            return dto;
         }
 
-        // Si no hay reporte, devolver al menos la posición final
         return new ReporteSigemaDTO(idEquipo, lat, lon, posicionFinal.getFecha(), 0.0, 0.0);
     }
+
+
+    private void enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken) {
+        try {
+            Map<String, Object> reporteMap = new HashMap<>();
+            reporteMap.put("idEquipo", dto.getIdEquipo());
+            reporteMap.put("latitud", dto.getLatitud());
+            reporteMap.put("longitud", dto.getLongitud());
+            reporteMap.put("fecha", dto.getFecha());
+            reporteMap.put("horasDeTrabajo", dto.getHorasDeTrabajo());
+            reporteMap.put("kilometros", dto.getKilometros());
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(jwtToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(reporteMap, headers);
+
+            String url = sigemaBackendUrl + "/api/reporte";
+
+            ResponseEntity<String> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.POST,
+                    requestEntity,
+                    String.class
+            );
+
+            System.out.println("Reporte enviado al backend principal. Estado: " + response.getStatusCode());
+
+        } catch (Exception e) {
+            System.err.println("Error al enviar reporte al backend principal: " + e.getMessage());
+        }
+    }
+
 
     @Override
     public void eliminarTrabajo(Long idEquipo) throws Exception {
