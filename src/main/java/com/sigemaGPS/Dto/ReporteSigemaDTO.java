@@ -1,6 +1,7 @@
 // appsigemagps/src/main/java/com/sigemaGPS/models/dto/ReporteSigemaDTO.java
 package com.sigemaGPS.Dto;
 
+import com.sigemaGPS.models.enums.UnidadMedida;
 import lombok.Getter;
 import lombok.Setter;
 import com.fasterxml.jackson.annotation.JsonFormat;
@@ -19,19 +20,24 @@ public class ReporteSigemaDTO {
     private Date fecha;
     private double horasDeTrabajo;
     private double kilometros;
+    private UnidadMedida unidadMedida;
+    private Long idUnidad;
 
 
     public ReporteSigemaDTO() {}
 
 
-    public ReporteSigemaDTO(Long idEquipo, double latitud, double longitud, Date fecha, double horasDeTrabajo, double kilometros) {
+    public ReporteSigemaDTO(Long idEquipo, double latitud, double longitud, Date fecha, double horasDeTrabajo, double kilometros, UnidadMedida unidadMedida, Long idUni) {
         this.idEquipo = idEquipo;
         this.latitud = latitud;
         this.longitud = longitud;
         this.fecha = fecha;
         this.horasDeTrabajo = horasDeTrabajo;
         this.kilometros = kilometros;
+        this.unidadMedida = unidadMedida;
+        this.idUnidad = idUni;
     }
+
 
     public Long getIdEquipo() {
         return idEquipo;
@@ -72,6 +78,20 @@ public class ReporteSigemaDTO {
     public void setKilometros(double kilometros) {
         this.kilometros = kilometros;
     }
+    public UnidadMedida getUnidadMedida() {
+        return unidadMedida;
+    }
 
+    public void setUnidadMedida(UnidadMedida unidadMedida) {
+        this.unidadMedida = unidadMedida;
+    }
+
+    public Long getUnidad() {
+        return idUnidad;
+    }
+
+    public void setUnidad(Long idUnidad) {
+        this.idUnidad = idUnidad;
+    }
 
 }

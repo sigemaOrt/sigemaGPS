@@ -3,12 +3,15 @@ package com.sigemaGPS.services.implementations;
 import com.sigemaGPS.Dto.PosicionClienteDTO;
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
+import com.sigemaGPS.models.enums.UnidadMedida;
 import com.sigemaGPS.services.IJsonStorageService;
 import com.sigemaGPS.utilidades.SigemaException;
 import com.sigemaGPS.services.IPosicionService;
 import com.sigemaGPS.models.EquipoSigema;
 import com.sigemaGPS.Dto.ReporteSigemaDTO;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -16,8 +19,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -32,7 +33,6 @@ public class PosicionService implements IPosicionService {
 
     @Value("${sigema.main.backend.url}")
     private String sigemaBackendUrl;
-
 
     @Autowired
     public PosicionService(RestTemplate restTemplate, IJsonStorageService jsonStorageService) {
@@ -81,9 +81,8 @@ public class PosicionService implements IPosicionService {
             }
         }, 15 * 60 * 1000, 15 * 60 * 1000);
 
-        return new ReporteSigemaDTO(idEquipo, lat, lon, posicion.getFecha(), 0.0, 0.0);
+        return new ReporteSigemaDTO(idEquipo, lat, lon, posicion.getFecha(), 0.0, 0.0, null, null);
     }
-
 
     @Override
     public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception {
@@ -104,6 +103,7 @@ public class PosicionService implements IPosicionService {
 
         posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicionFinal);
 
+        // Obtener equipo con información completa
         EquipoSigema equipo = null;
         try {
             String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
@@ -113,8 +113,21 @@ public class PosicionService implements IPosicionService {
 
             ResponseEntity<EquipoSigema> response = restTemplate.exchange(url, HttpMethod.GET, entity, EquipoSigema.class);
             equipo = response.getBody();
+
+            if (equipo != null && equipo.getModeloEquipo() != null && equipo.getModeloEquipo().getUnidadMedida() != null) {
+                System.out.println("Equipo obtenido con unidad de medida: " + equipo.getModeloEquipo().getUnidadMedida());
+            }
+
+            // Log adicional para debugging
+            if (equipo != null) {
+                System.out.println("Equipo obtenido - ID: " + equipo.getId());
+                System.out.println("Unidad del equipo: " + (equipo.getUnidad() != null ? equipo.getUnidad().getId() : "null"));
+            }
+
         } catch (Exception e) {
             System.err.println("Error al obtener información del equipo para finalización: " + e.getMessage());
+            logger.error("Error detallado al obtener equipo: ", e);
+            throw new SigemaException("Error al obtener información del equipo: " + e.getMessage());
         }
 
         jsonStorageService.agregarPosicionAViaje(idEquipo, posicionFinal, equipo);
@@ -122,41 +135,109 @@ public class PosicionService implements IPosicionService {
         jsonStorageService.finalizarViaje(idEquipo);
 
         ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
+
+        // Extraer información del equipo
+        UnidadMedida unidadMedida = null;
+        Long idUnidad = null;
+        if (equipo != null) {
+            unidadMedida = equipo.getModeloEquipo() != null ? equipo.getModeloEquipo().getUnidadMedida() : null;
+            idUnidad = equipo.getUnidad() != null ? equipo.getUnidad().getId() : null;
+        }
+
+        // Validar que tenemos idUnidad antes de crear el DTO
+        if (idUnidad == null || idUnidad == 0) {
+            throw new SigemaException("No se pudo obtener el ID de unidad del equipo. Verifique que el equipo tenga una unidad asignada.");
+        }
+
+        ReporteSigemaDTO dto;
         if (reporte != null && reporte.getUltimaPosicion() != null) {
-            ReporteSigemaDTO dto = new ReporteSigemaDTO(
+            dto = new ReporteSigemaDTO(
                     idEquipo,
                     lat,
                     lon,
                     posicionFinal.getFecha(),
                     reporte.getTotalHoras(),
-                    reporte.getTotalKMs()
+                    reporte.getTotalKMs(),
+                    unidadMedida,
+                    idUnidad  // Usar idUnidad validado
             );
-
-            // 🟢 Enviar el reporte al backend principal
-            enviarReporteAlBackendPrincipal(dto, jwtToken);
-
-            return dto;
+        } else {
+            dto = new ReporteSigemaDTO(
+                    idEquipo,
+                    lat,
+                    lon,
+                    posicionFinal.getFecha(),
+                    0.0,
+                    0.0,
+                    unidadMedida,
+                    idUnidad  // Usar idUnidad validado
+            );
         }
 
-        return new ReporteSigemaDTO(idEquipo, lat, lon, posicionFinal.getFecha(), 0.0, 0.0);
+        // Asegurar que el DTO tenga el idUnidad correcto
+        dto.setUnidad(idUnidad);
+
+        enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
+
+        return dto;
     }
 
 
-    private void enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken) {
+    private static final Logger logger = LoggerFactory.getLogger(PosicionService.class);
+
+    private void enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken, EquipoSigema equipo) {
         try {
-            Map<String, Object> reporteMap = new HashMap<>();
-            reporteMap.put("idEquipo", dto.getIdEquipo());
-            reporteMap.put("latitud", dto.getLatitud());
-            reporteMap.put("longitud", dto.getLongitud());
-            reporteMap.put("fecha", dto.getFecha());
-            reporteMap.put("horasDeTrabajo", dto.getHorasDeTrabajo());
-            reporteMap.put("kilometros", dto.getKilometros());
+            logger.info("Datos enviados al backend principal:");
+            logger.info("idEquipo: {}", dto.getIdEquipo());
+            logger.info("latitud: {}", dto.getLatitud());
+            logger.info("unidadMedida: {}", dto.getUnidadMedida());
+            logger.info("idUnidad antes de validación: {}", dto.getUnidad());
+
+            // Validar y establecer idUnidad ANTES de crear el reporte
+            Long idUnidadFinal = dto.getUnidad();
+
+            // Si idUnidad es nulo o cero, intentar obtenerlo del equipo
+            if (idUnidadFinal == null || idUnidadFinal == 0) {
+                if (equipo != null && equipo.getUnidad() != null && equipo.getUnidad().getId() != null) {
+                    idUnidadFinal = equipo.getUnidad().getId();
+                    logger.info("idUnidad obtenido del equipo: {}", idUnidadFinal);
+                } else {
+                    // Log detallado para debugging
+                    logger.error("ERROR: No se pudo obtener idUnidad válido");
+                    logger.error("dto.getUnidad(): {}", dto.getUnidad());
+                    logger.error("equipo: {}", equipo);
+                    if (equipo != null) {
+                        logger.error("equipo.getUnidad(): {}", equipo.getUnidad());
+                        if (equipo.getUnidad() != null) {
+                            logger.error("equipo.getUnidad().getId(): {}", equipo.getUnidad().getId());
+                        }
+                    }
+                    throw new SigemaException("El idUnidad no puede ser nulo o cero y no se pudo obtener del equipo");
+                }
+            }
+
+            // Validación final
+            if (idUnidadFinal == null || idUnidadFinal == 0) {
+                throw new SigemaException("Debe asociar una unidad válida al equipo");
+            }
+
+            // Crear el reporte con el idUnidad validado
+            ReporteSigemaDTO reporte = new ReporteSigemaDTO();
+            reporte.setIdEquipo(dto.getIdEquipo());
+            reporte.setLatitud(dto.getLatitud());
+            reporte.setLongitud(dto.getLongitud());
+            reporte.setFecha(dto.getFecha());
+            reporte.setHorasDeTrabajo(dto.getHorasDeTrabajo());
+            reporte.setKilometros(dto.getKilometros());
+            reporte.setIdUnidad(idUnidadFinal); // Usar idUnidadFinal validado
+
+            logger.info("idUnidad final asignado: {}", idUnidadFinal);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(jwtToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
 
-            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(reporteMap, headers);
+            HttpEntity<ReporteSigemaDTO> requestEntity = new HttpEntity<>(reporte, headers);
 
             String url = sigemaBackendUrl + "/api/reporte";
 
@@ -167,10 +248,16 @@ public class PosicionService implements IPosicionService {
                     String.class
             );
 
-            System.out.println("Reporte enviado al backend principal. Estado: " + response.getStatusCode());
+            logger.info("Reporte enviado al backend principal. Estado: {}", response.getStatusCode());
 
         } catch (Exception e) {
-            System.err.println("Error al enviar reporte al backend principal: " + e.getMessage());
+            logger.error("Error al enviar reporte al backend principal: {}", e.getMessage());
+            logger.error("Error detallado al enviar reporte: ", e);
+
+            // Si es un error de validación, re-lanzar para que el controlador lo maneje
+            if (e instanceof SigemaException) {
+                throw (SigemaException) e;
+            }
         }
     }
 
@@ -215,11 +302,9 @@ public class PosicionService implements IPosicionService {
         posicion.setFecha(new Date());
         posicion.setFin(fin);
 
-        // Guardar en memoria
         posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicion);
         estadoEquipos.put(idEquipo, true);
 
-        // Guardar en JSON según la nomenclatura requerida
         if (inicioViaje) {
             jsonStorageService.iniciarViaje(idEquipo, posicion, equipo);
         } else {
@@ -228,6 +313,7 @@ public class PosicionService implements IPosicionService {
     }
 
     // Resto de métodos sin cambios...
+
     @Override
     public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) {
         List<Posicion> todas = posicionesPorEquipo.getOrDefault(idEquipo, new ArrayList<>());

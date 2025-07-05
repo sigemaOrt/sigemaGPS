@@ -67,12 +67,19 @@ public class JsonStorageService implements IJsonStorageService {
                 equipoData.put("latitud", equipoInfo.getLatitud());
                 equipoData.put("longitud", equipoInfo.getLongitud());
 
-                if (equipoInfo.getUnidadMedida() != null) {
-                    equipoData.put("unidadMedida", equipoInfo.getUnidadMedida());
+                // Unidad de medida del modelo de equipo como String
+                if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
+                    equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida().toString());
+                }
+
+                // Id de la unidad física
+                if (equipoInfo.getUnidad() != null) {
+                    equipoData.put("idUnidad", equipoInfo.getUnidad().getId());
                 }
 
                 viajeData.put("equipoInfo", equipoData);
             }
+
 
             List<Map<String, Object>> posiciones = new ArrayList<>();
             Map<String, Object> posicionData = new HashMap<>();
@@ -121,16 +128,19 @@ public class JsonStorageService implements IJsonStorageService {
             posicionData.put("esFinal", posicion.isFin());
             posiciones.add(posicionData);
 
-            // Actualizar información del equipo incluyendo la unidad de medida
+            // Actualizar información del equipo incluyendo unidadMedida y idUnidad
             if (equipoInfo != null) {
                 Map<String, Object> equipoData = new HashMap<>();
                 equipoData.put("id", equipoInfo.getId());
                 equipoData.put("latitud", equipoInfo.getLatitud());
                 equipoData.put("longitud", equipoInfo.getLongitud());
 
-                // Guardar la unidad de medida del equipo
-                if (equipoInfo.getUnidadMedida() != null) {
-                    equipoData.put("unidadMedida", equipoInfo.getUnidadMedida());
+                if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
+                    equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida().toString());
+                }
+
+                if (equipoInfo.getUnidad() != null) {
+                    equipoData.put("idUnidad", equipoInfo.getUnidad().getId());
                 }
 
                 viajeData.put("equipoInfo", equipoData);
@@ -145,6 +155,7 @@ public class JsonStorageService implements IJsonStorageService {
             System.err.println("Error al agregar posición al viaje: " + e.getMessage());
         }
     }
+
 
     public void finalizarViaje(Long idEquipo) {
         try {
@@ -162,6 +173,18 @@ public class JsonStorageService implements IJsonStorageService {
             // Actualizar estado
             viajeData.put("estado", "FINALIZADO");
             viajeData.put("fechaFin", new Date());
+
+            // Actualizar equipoInfo latitud y longitud con la última posición registrada
+            List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
+            if (posiciones != null && !posiciones.isEmpty()) {
+                Map<String, Object> ultimaPosicion = posiciones.get(posiciones.size() - 1);
+
+                Map<String, Object> equipoData = (Map<String, Object>) viajeData.get("equipoInfo");
+                if (equipoData != null) {
+                    equipoData.put("latitud", ultimaPosicion.get("latitud"));
+                    equipoData.put("longitud", ultimaPosicion.get("longitud"));
+                }
+            }
 
             // Crear nuevo nombre de archivo: IDMAQUINA_finalizado_fechahora
             LocalDateTime now = LocalDateTime.now();
@@ -184,6 +207,7 @@ public class JsonStorageService implements IJsonStorageService {
             System.err.println("Error al finalizar viaje: " + e.getMessage());
         }
     }
+
 
     // Método para obtener datos del viaje finalizado incluyendo la unidad de medida
     public Map<String, Object> obtenerDatosViajeParaReporte(Long idEquipo, String fechaHora) {
@@ -223,8 +247,8 @@ public class JsonStorageService implements IJsonStorageService {
                 equipoData.put("longitud", equipoInfo.getLongitud());
 
                 // Incluir unidad de medida
-                if (equipoInfo.getUnidadMedida() != null) {
-                    equipoData.put("unidadMedida", equipoInfo.getUnidadMedida());
+                if (equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
+                    equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida());
                 }
 
                 posicionCompleta.put("equipo", equipoData);
