@@ -4,6 +4,7 @@ import com.sigemaGPS.Dto.PosicionClienteDTO;
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.ReporteFinViaje;
 import com.sigemaGPS.models.enums.UnidadMedida;
+import com.sigemaGPS.services.IEmailService;
 import com.sigemaGPS.services.IJsonStorageService;
 import com.sigemaGPS.utilidades.SigemaException;
 import com.sigemaGPS.services.IPosicionService;
@@ -25,11 +26,17 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class PosicionService implements IPosicionService {
 
+    private static final Logger logger = LoggerFactory.getLogger(PosicionService.class);
+
     private final RestTemplate restTemplate;
     private final IJsonStorageService jsonStorageService;
     private final Map<Long, Boolean> estadoEquipos = new ConcurrentHashMap<>();
     private final Map<Long, Timer> timersEquipos = new ConcurrentHashMap<>();
     private final Map<Long, List<Posicion>> posicionesPorEquipo = new ConcurrentHashMap<>();
+
+    @Autowired
+    private IEmailService emailService;
+
 
     @Value("${sigema.main.backend.url}")
     private String sigemaBackendUrl;
@@ -104,7 +111,83 @@ public class PosicionService implements IPosicionService {
         posicionesPorEquipo.computeIfAbsent(idEquipo, k -> new ArrayList<>()).add(posicionFinal);
 
         // Obtener equipo con información completa
-        EquipoSigema equipo = null;
+        EquipoSigema equipo = obtenerEquipoCompleto(idEquipo, jwtToken);
+
+        jsonStorageService.agregarPosicionAViaje(idEquipo, posicionFinal, equipo);
+        setEnUso(idEquipo, false);
+
+        ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
+
+        // Calcular valor según unidad de medida
+        double valorCalculado = calcularValorSegunUnidadMedida(equipo, reporte);
+
+        // CAMBIO IMPORTANTE: Usar el nuevo método con cálculos
+        jsonStorageService.finalizarViajeConCalculo(idEquipo, valorCalculado, reporte);
+
+        // Crear DTO con el valor calculado
+        ReporteSigemaDTO dto = crearReporteSigemaDTO(
+                idEquipo, lat, lon, posicionFinal.getFecha(),
+                equipo, reporte, valorCalculado
+        );
+
+        enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
+
+        String destinatario = "cr.velozz@gmail.com";
+        String asunto = "Trabajo Finalizado - Equipo " + idEquipo;
+        String cuerpo = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 8px; padding: 20px; background-color: #f9f9f9;'>"
+                + "<h2 style='color: #2c3e50; text-align: center;'>🚀 Trabajo Finalizado</h2>"
+                + "<p style='font-size: 16px; color: #34495e;'>Hola,</p>"
+                + "<p style='font-size: 16px; color: #34495e;'>Se ha finalizado el trabajo para el equipo con los siguientes detalles:</p>"
+                + "<table style='width: 100%; border-collapse: collapse; margin-top: 20px;'>"
+                + "<tr style='background-color: #3498db; color: white;'>"
+                + "<th style='padding: 10px; text-align: left; border-radius: 6px 0 0 0;'>Detalle</th>"
+                + "<th style='padding: 10px; text-align: right; border-radius: 0 6px 0 0;'>Valor</th>"
+                + "</tr>"
+                + "<tr style='background-color: #ecf0f1;'>"
+                + "<td style='padding: 10px;'>Equipo</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + idEquipo + "</td>"
+                + "</tr>"
+                + "<tr>"
+                + "<td style='padding: 10px;'>Latitud</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + lat + "</td>"
+                + "</tr>"
+                + "<tr style='background-color: #ecf0f1;'>"
+                + "<td style='padding: 10px;'>Longitud</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + lon + "</td>"
+                + "</tr>"
+                + "<tr>"
+                + "<td style='padding: 10px;'>Horas de trabajo</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + dto.getHorasDeTrabajo() + "</td>"
+                + "</tr>"
+                + "<tr style='background-color: #ecf0f1;'>"
+                + "<td style='padding: 10px;'>Kilómetros recorridos</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + dto.getKilometros() + "</td>"
+                + "</tr>"
+                + "<tr>"
+                + "<td style='padding: 10px;'>Matrícula</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + equipo.getMatricula() + "</td>"
+                + "</tr>"
+                + "<tr style='background-color: #ecf0f1;'>"
+                + "<td style='padding: 10px;'>Modelo</td>"
+                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + equipo.getModeloEquipo().getModelo() + "</td>"
+                + "</tr>"
+                + "</table>"
+                + "<p style='margin-top: 20px; font-size: 14px; color: #7f8c8d; text-align: center;'>Sigema APP.</p>"
+                + "</div>";
+
+
+
+
+        emailService.enviarCorreoFinalizacionTrabajo(idEquipo, destinatario, asunto, cuerpo);
+
+
+        return dto;
+    }
+
+    /**
+     * Obtiene el equipo completo con toda su información
+     */
+    private EquipoSigema obtenerEquipoCompleto(Long idEquipo, String jwtToken) throws Exception {
         try {
             String url = sigemaBackendUrl + "/api/equipos/" + idEquipo;
             HttpHeaders headers = new HttpHeaders();
@@ -112,132 +195,141 @@ public class PosicionService implements IPosicionService {
             HttpEntity<String> entity = new HttpEntity<>(headers);
 
             ResponseEntity<EquipoSigema> response = restTemplate.exchange(url, HttpMethod.GET, entity, EquipoSigema.class);
-            equipo = response.getBody();
+            EquipoSigema equipo = response.getBody();
 
-            if (equipo != null && equipo.getModeloEquipo() != null && equipo.getModeloEquipo().getUnidadMedida() != null) {
-                System.out.println("Equipo obtenido con unidad de medida: " + equipo.getModeloEquipo().getUnidadMedida());
+            if (equipo == null) {
+                throw new SigemaException("Equipo no encontrado con ID: " + idEquipo);
             }
 
-            // Log adicional para debugging
-            if (equipo != null) {
-                System.out.println("Equipo obtenido - ID: " + equipo.getId());
-                System.out.println("Unidad del equipo: " + (equipo.getUnidad() != null ? equipo.getUnidad().getId() : "null"));
-            }
+            logger.info("Equipo obtenido - ID: {}", equipo.getId());
+            logger.info("Unidad del equipo: {}", (equipo.getUnidad() != null ? equipo.getUnidad().getId() : "null"));
+            logger.info("Unidad de medida: {}", (equipo.getModeloEquipo() != null && equipo.getModeloEquipo().getUnidadMedida() != null
+                    ? equipo.getModeloEquipo().getUnidadMedida() : "null"));
+
+            return equipo;
 
         } catch (Exception e) {
-            System.err.println("Error al obtener información del equipo para finalización: " + e.getMessage());
-            logger.error("Error detallado al obtener equipo: ", e);
+            logger.error("Error al obtener información del equipo {}: {}", idEquipo, e.getMessage());
             throw new SigemaException("Error al obtener información del equipo: " + e.getMessage());
         }
+    }
 
-        jsonStorageService.agregarPosicionAViaje(idEquipo, posicionFinal, equipo);
-        setEnUso(idEquipo, false);
-        jsonStorageService.finalizarViaje(idEquipo);
-
-        ReporteFinViaje reporte = obtenerReporteViaje(idEquipo, LocalDate.now());
-
-        // Extraer información del equipo
-        UnidadMedida unidadMedida = null;
-        Long idUnidad = null;
-        if (equipo != null) {
-            unidadMedida = equipo.getModeloEquipo() != null ? equipo.getModeloEquipo().getUnidadMedida() : null;
-            idUnidad = equipo.getUnidad() != null ? equipo.getUnidad().getId() : null;
+    /**
+     * Calcula el valor según la unidad de medida del equipo
+     */
+    private double calcularValorSegunUnidadMedida(EquipoSigema equipo, ReporteFinViaje reporte) {
+        if (equipo == null || equipo.getModeloEquipo() == null) {
+            logger.warn("Equipo o modelo de equipo es null, retornando 0");
+            return 0.0;
         }
 
-        // Validar que tenemos idUnidad antes de crear el DTO
-        if (idUnidad == null || idUnidad == 0) {
-            throw new SigemaException("No se pudo obtener el ID de unidad del equipo. Verifique que el equipo tenga una unidad asignada.");
+        UnidadMedida unidadMedida = equipo.getModeloEquipo().getUnidadMedida();
+
+        if (unidadMedida == null) {
+            logger.warn("Unidad de medida es null, retornando 0");
+            return 0.0;
         }
 
-        ReporteSigemaDTO dto;
-        if (reporte != null && reporte.getUltimaPosicion() != null) {
-            dto = new ReporteSigemaDTO(
-                    idEquipo,
-                    lat,
-                    lon,
-                    posicionFinal.getFecha(),
-                    reporte.getTotalHoras(),
-                    reporte.getTotalKMs(),
-                    unidadMedida,
-                    idUnidad  // Usar idUnidad validado
-            );
-        } else {
-            dto = new ReporteSigemaDTO(
-                    idEquipo,
-                    lat,
-                    lon,
-                    posicionFinal.getFecha(),
-                    0.0,
-                    0.0,
-                    unidadMedida,
-                    idUnidad  // Usar idUnidad validado
-            );
+        double valor = 0.0;
+
+        switch (unidadMedida) {
+            case HT:
+                valor = reporte != null ? reporte.getTotalHoras() : 0.0;
+                logger.info("Calculando HORAS - Valor: {}", valor);
+                break;
+
+            case KMs:
+                valor = reporte != null ? reporte.getTotalKMs() : 0.0;
+                logger.info("Calculando KILOMETROS - Valor: {}", valor);
+                break;
+
+            default:
+                logger.warn("Unidad de medida desconocida: {}, retornando 0", unidadMedida);
+                valor = 0.0;
+                break;
         }
 
-        // Asegurar que el DTO tenga el idUnidad correcto
+        logger.info("Valor final calculado para unidad {}: {}", unidadMedida, valor);
+        return valor;
+    }
+
+    /**
+     * Crea el DTO del reporte con la información calculada
+     */
+    private ReporteSigemaDTO crearReporteSigemaDTO(Long idEquipo, double lat, double lon, Date fecha,
+                                                   EquipoSigema equipo, ReporteFinViaje reporte,
+                                                   double valorCalculado) throws Exception {
+
+        // Validar que el equipo tenga una unidad asignada
+        if (equipo.getUnidad() == null || equipo.getUnidad().getId() == null) {
+            throw new SigemaException("El equipo debe tener una unidad asignada");
+        }
+
+        Long idUnidad = equipo.getUnidad().getId();
+        UnidadMedida unidadMedida = equipo.getModeloEquipo() != null ?
+                equipo.getModeloEquipo().getUnidadMedida() : null;
+
+        ReporteSigemaDTO dto = new ReporteSigemaDTO();
+        dto.setIdEquipo(idEquipo);
+        dto.setLatitud(lat);
+        dto.setLongitud(lon);
+        dto.setFecha(fecha);
+        dto.setUnidadMedida(unidadMedida);
         dto.setUnidad(idUnidad);
 
-        enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
+        // Asignar el valor calculado según la unidad de medida
+        if (unidadMedida == UnidadMedida.HT) {
+            dto.setHorasDeTrabajo(valorCalculado);
+            dto.setKilometros(0.0);
+        } else if (unidadMedida == UnidadMedida.KMs) {
+            dto.setKilometros(valorCalculado);
+            dto.setHorasDeTrabajo(0.0);
+        } else {
+            dto.setHorasDeTrabajo(reporte != null ? reporte.getTotalHoras() : 0.0);
+            dto.setKilometros(reporte != null ? reporte.getTotalKMs() : 0.0);
+        }
+
+        logger.info("DTO creado - Equipo: {}, Unidad: {}, UnidadMedida: {}, Valor: {}",
+                idEquipo, idUnidad, unidadMedida, valorCalculado);
 
         return dto;
     }
 
-
-    private static final Logger logger = LoggerFactory.getLogger(PosicionService.class);
-
+    /**
+     * Envía el reporte al backend principal
+     */
     private void enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken, EquipoSigema equipo) {
         try {
-            logger.info("Datos enviados al backend principal:");
+            logger.info("=== ENVIANDO REPORTE AL BACKEND PRINCIPAL ===");
             logger.info("idEquipo: {}", dto.getIdEquipo());
-            logger.info("latitud: {}", dto.getLatitud());
+            logger.info("idUnidad: {}", dto.getUnidad());
             logger.info("unidadMedida: {}", dto.getUnidadMedida());
-            logger.info("idUnidad antes de validación: {}", dto.getUnidad());
+            logger.info("horasDeTrabajo: {}", dto.getHorasDeTrabajo());
+            logger.info("kilometros: {}", dto.getKilometros());
+            logger.info("latitud: {}", dto.getLatitud());
+            logger.info("longitud: {}", dto.getLongitud());
 
-            // Validar y establecer idUnidad ANTES de crear el reporte
-            Long idUnidadFinal = dto.getUnidad();
-
-            // Si idUnidad es nulo o cero, intentar obtenerlo del equipo
-            if (idUnidadFinal == null || idUnidadFinal == 0) {
-                if (equipo != null && equipo.getUnidad() != null && equipo.getUnidad().getId() != null) {
-                    idUnidadFinal = equipo.getUnidad().getId();
-                    logger.info("idUnidad obtenido del equipo: {}", idUnidadFinal);
-                } else {
-                    // Log detallado para debugging
-                    logger.error("ERROR: No se pudo obtener idUnidad válido");
-                    logger.error("dto.getUnidad(): {}", dto.getUnidad());
-                    logger.error("equipo: {}", equipo);
-                    if (equipo != null) {
-                        logger.error("equipo.getUnidad(): {}", equipo.getUnidad());
-                        if (equipo.getUnidad() != null) {
-                            logger.error("equipo.getUnidad().getId(): {}", equipo.getUnidad().getId());
-                        }
-                    }
-                    throw new SigemaException("El idUnidad no puede ser nulo o cero y no se pudo obtener del equipo");
-                }
+            // Validación final antes del envío
+            if (dto.getUnidad() == null || dto.getUnidad() == 0) {
+                throw new SigemaException("El idUnidad no puede ser nulo o cero");
             }
 
-            // Validación final
-            if (idUnidadFinal == null || idUnidadFinal == 0) {
-                throw new SigemaException("Debe asociar una unidad válida al equipo");
-            }
-
-            // Crear el reporte con el idUnidad validado
-            ReporteSigemaDTO reporte = new ReporteSigemaDTO();
-            reporte.setIdEquipo(dto.getIdEquipo());
-            reporte.setLatitud(dto.getLatitud());
-            reporte.setLongitud(dto.getLongitud());
-            reporte.setFecha(dto.getFecha());
-            reporte.setHorasDeTrabajo(dto.getHorasDeTrabajo());
-            reporte.setKilometros(dto.getKilometros());
-            reporte.setIdUnidad(idUnidadFinal); // Usar idUnidadFinal validado
-
-            logger.info("idUnidad final asignado: {}", idUnidadFinal);
+            // Crear el reporte final para envío
+            ReporteSigemaDTO reporteParaEnvio = new ReporteSigemaDTO();
+            reporteParaEnvio.setIdEquipo(dto.getIdEquipo());
+            reporteParaEnvio.setLatitud(dto.getLatitud());
+            reporteParaEnvio.setLongitud(dto.getLongitud());
+            reporteParaEnvio.setFecha(dto.getFecha());
+            reporteParaEnvio.setHorasDeTrabajo(dto.getHorasDeTrabajo());
+            reporteParaEnvio.setKilometros(dto.getKilometros());
+            reporteParaEnvio.setIdUnidad(dto.getUnidad());
+            reporteParaEnvio.setUnidadMedida(dto.getUnidadMedida());
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(jwtToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
 
-            HttpEntity<ReporteSigemaDTO> requestEntity = new HttpEntity<>(reporte, headers);
+            HttpEntity<ReporteSigemaDTO> requestEntity = new HttpEntity<>(reporteParaEnvio, headers);
 
             String url = sigemaBackendUrl + "/api/reporte";
 
@@ -248,19 +340,20 @@ public class PosicionService implements IPosicionService {
                     String.class
             );
 
-            logger.info("Reporte enviado al backend principal. Estado: {}", response.getStatusCode());
+            logger.info("Reporte enviado exitosamente. Estado: {}", response.getStatusCode());
 
         } catch (Exception e) {
             logger.error("Error al enviar reporte al backend principal: {}", e.getMessage());
-            logger.error("Error detallado al enviar reporte: ", e);
+            logger.error("Error detallado: ", e);
 
             // Si es un error de validación, re-lanzar para que el controlador lo maneje
             if (e instanceof SigemaException) {
                 throw (SigemaException) e;
             }
+
+            throw new SigemaException("Error al enviar reporte al backend principal: " + e.getMessage());
         }
     }
-
 
     @Override
     public void eliminarTrabajo(Long idEquipo) throws Exception {
@@ -312,8 +405,6 @@ public class PosicionService implements IPosicionService {
         }
     }
 
-    // Resto de métodos sin cambios...
-
     @Override
     public List<Posicion> obtenerTodasPorIdEquipo(Long idEquipo, LocalDate fecha) {
         List<Posicion> todas = posicionesPorEquipo.getOrDefault(idEquipo, new ArrayList<>());
@@ -352,6 +443,9 @@ public class PosicionService implements IPosicionService {
         }
 
         double horas = tiempoUso / (1000.0 * 60 * 60);
+
+        logger.info("Reporte calculado para equipo {}: {} horas, {} km", idEquipo, horas, totalKm);
+
         return new ReporteFinViaje(posiciones.get(posiciones.size() - 1), fecha, idEquipo, horas, totalKm);
     }
 

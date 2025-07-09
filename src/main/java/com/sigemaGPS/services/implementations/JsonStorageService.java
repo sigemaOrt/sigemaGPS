@@ -2,11 +2,15 @@ package com.sigemaGPS.services.implementations;
 
 import com.sigemaGPS.models.Posicion;
 import com.sigemaGPS.models.EquipoSigema;
+import com.sigemaGPS.models.ReporteFinViaje;
+import com.sigemaGPS.models.enums.UnidadMedida;
 import com.sigemaGPS.Dto.ReporteSigemaDTO;
 import com.sigemaGPS.services.IJsonStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -23,6 +27,7 @@ import java.util.*;
 @Service
 public class JsonStorageService implements IJsonStorageService {
 
+    private static final Logger logger = LoggerFactory.getLogger(JsonStorageService.class);
     private final ObjectMapper objectMapper;
 
     @Value("${sigema.json.storage.path:./data/posiciones}")
@@ -62,43 +67,48 @@ public class JsonStorageService implements IJsonStorageService {
             viajeData.put("estado", "EN_CURSO");
 
             if (equipoInfo != null) {
-                Map<String, Object> equipoData = new HashMap<>();
-                equipoData.put("id", equipoInfo.getId());
-                equipoData.put("latitud", equipoInfo.getLatitud());
-                equipoData.put("longitud", equipoInfo.getLongitud());
-
-                // Unidad de medida del modelo de equipo como String
-                if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
-                    equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida().toString());
-                }
-
-                // Id de la unidad física
-                if (equipoInfo.getUnidad() != null) {
-                    equipoData.put("idUnidad", equipoInfo.getUnidad().getId());
-                }
-
+                Map<String, Object> equipoData = crearEquipoData(equipoInfo);
                 viajeData.put("equipoInfo", equipoData);
             }
 
-
             List<Map<String, Object>> posiciones = new ArrayList<>();
-            Map<String, Object> posicionData = new HashMap<>();
-            posicionData.put("timestamp", posicion.getFecha());
-            posicionData.put("latitud", posicion.getLatitud());
-            posicionData.put("longitud", posicion.getLongitud());
-            posicionData.put("esFinal", posicion.isFin());
+            Map<String, Object> posicionData = crearPosicionData(posicion);
             posiciones.add(posicionData);
 
             viajeData.put("posiciones", posiciones);
+
+            // Inicializar cálculos con campos HT y KM
+            Map<String, Object> calculos = new HashMap<>();
+            calculos.put("totalHoras", 0.0);
+            calculos.put("totalKilometros", 0.0);
+            calculos.put("valorSegunUnidadMedida", 0.0);
+
+            String unidadMedida = equipoInfo != null && equipoInfo.getModeloEquipo() != null ?
+                    equipoInfo.getModeloEquipo().getUnidadMedida().toString() : null;
+            calculos.put("unidadMedidaUtilizada", unidadMedida);
+
+            // Inicializar campos HT y KM según unidad de medida
+            if ("HT".equals(unidadMedida)) {
+                calculos.put("ht", 0.0);
+                calculos.put("km", 0.0);
+            } else if ("KMs".equals(unidadMedida)) {
+                calculos.put("km", 0.0);
+                calculos.put("ht", 0.0);
+            } else {
+                calculos.put("ht", 0.0);
+                calculos.put("km", 0.0);
+            }
+
+            viajeData.put("calculos", calculos);
 
             String fileName = idEquipo + "_enCurso.json";
             File file = new File(jsonStoragePath, fileName);
 
             objectMapper.writeValue(file, viajeData);
-            System.out.println("Viaje iniciado - Archivo creado: " + file.getAbsolutePath());
+            logger.info("Viaje iniciado - Archivo creado: {} con unidad de medida: {}", file.getAbsolutePath(), unidadMedida);
 
         } catch (IOException e) {
-            System.err.println("Error al iniciar viaje en JSON: " + e.getMessage());
+            logger.error("Error al iniciar viaje en JSON: {}", e.getMessage());
         }
     }
 
@@ -108,7 +118,7 @@ public class JsonStorageService implements IJsonStorageService {
             File file = new File(jsonStoragePath, fileName);
 
             if (!file.exists()) {
-                System.err.println("Archivo de viaje en curso no encontrado: " + fileName);
+                logger.error("Archivo de viaje en curso no encontrado: {}", fileName);
                 iniciarViaje(idEquipo, posicion, equipoInfo);
                 return;
             }
@@ -121,49 +131,40 @@ public class JsonStorageService implements IJsonStorageService {
                 viajeData.put("posiciones", posiciones);
             }
 
-            Map<String, Object> posicionData = new HashMap<>();
-            posicionData.put("timestamp", posicion.getFecha());
-            posicionData.put("latitud", posicion.getLatitud());
-            posicionData.put("longitud", posicion.getLongitud());
-            posicionData.put("esFinal", posicion.isFin());
+            Map<String, Object> posicionData = crearPosicionData(posicion);
             posiciones.add(posicionData);
 
-            // Actualizar información del equipo incluyendo unidadMedida y idUnidad
+            // Actualizar información del equipo
             if (equipoInfo != null) {
-                Map<String, Object> equipoData = new HashMap<>();
-                equipoData.put("id", equipoInfo.getId());
-                equipoData.put("latitud", equipoInfo.getLatitud());
-                equipoData.put("longitud", equipoInfo.getLongitud());
-
-                if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
-                    equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida().toString());
-                }
-
-                if (equipoInfo.getUnidad() != null) {
-                    equipoData.put("idUnidad", equipoInfo.getUnidad().getId());
-                }
-
+                Map<String, Object> equipoData = crearEquipoData(equipoInfo);
                 viajeData.put("equipoInfo", equipoData);
+            }
+
+            // Actualizar cálculos intermedios si hay más de una posición
+            if (posiciones.size() > 1) {
+                actualizarCalculosIntermedios(viajeData, posiciones);
             }
 
             viajeData.put("ultimaActualizacion", new Date());
 
             objectMapper.writeValue(file, viajeData);
-            System.out.println("Posición agregada al viaje - Total posiciones: " + posiciones.size());
+            logger.info("Posición agregada al viaje - Total posiciones: {}", posiciones.size());
 
         } catch (IOException e) {
-            System.err.println("Error al agregar posición al viaje: " + e.getMessage());
+            logger.error("Error al agregar posición al viaje: {}", e.getMessage());
         }
     }
 
-
-    public void finalizarViaje(Long idEquipo) {
+    /**
+     * Método nuevo para finalizar viaje con cálculos
+     */
+    public void finalizarViajeConCalculo(Long idEquipo, double valorCalculado, ReporteFinViaje reporte) {
         try {
             String fileNameEnCurso = idEquipo + "_enCurso.json";
             File fileEnCurso = new File(jsonStoragePath, fileNameEnCurso);
 
             if (!fileEnCurso.exists()) {
-                System.err.println("Archivo de viaje en curso no encontrado: " + fileNameEnCurso);
+                logger.error("Archivo de viaje en curso no encontrado: {}", fileNameEnCurso);
                 return;
             }
 
@@ -174,59 +175,301 @@ public class JsonStorageService implements IJsonStorageService {
             viajeData.put("estado", "FINALIZADO");
             viajeData.put("fechaFin", new Date());
 
-            // Actualizar equipoInfo latitud y longitud con la última posición registrada
-            List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
-            if (posiciones != null && !posiciones.isEmpty()) {
-                Map<String, Object> ultimaPosicion = posiciones.get(posiciones.size() - 1);
+            // Actualizar información del equipo con última posición
+            actualizarEquipoConUltimaPosicion(viajeData);
 
-                Map<String, Object> equipoData = (Map<String, Object>) viajeData.get("equipoInfo");
-                if (equipoData != null) {
-                    equipoData.put("latitud", ultimaPosicion.get("latitud"));
-                    equipoData.put("longitud", ultimaPosicion.get("longitud"));
-                }
-            }
+            // Actualizar cálculos finales
+            actualizarCalculosFinales(viajeData, valorCalculado, reporte);
 
-            // Crear nuevo nombre de archivo: IDMAQUINA_finalizado_fechahora
-            LocalDateTime now = LocalDateTime.now();
-            String fechaHora = now.format(DateTimeFormatter.ofPattern("ddMMyyyy_HHmm"));
-            String fileNameFinalizado = idEquipo + "_finalizado_" + fechaHora + ".json";
-            File fileFinalizado = new File(jsonStoragePath, fileNameFinalizado);
-
-            // Guardar con nuevo nombre
-            objectMapper.writeValue(fileFinalizado, viajeData);
-            System.out.println("Viaje finalizado - Archivo creado: " + fileFinalizado.getAbsolutePath());
+            // Crear archivo finalizado
+            crearArchivoFinalizado(idEquipo, viajeData);
 
             // Eliminar archivo en curso
-            if (fileEnCurso.delete()) {
-                System.out.println("Archivo en curso eliminado: " + fileEnCurso.getAbsolutePath());
-            } else {
-                System.err.println("No se pudo eliminar el archivo en curso: " + fileEnCurso.getAbsolutePath());
-            }
+            eliminarArchivoEnCurso(fileEnCurso);
 
         } catch (IOException e) {
-            System.err.println("Error al finalizar viaje: " + e.getMessage());
+            logger.error("Error al finalizar viaje con cálculo: {}", e.getMessage());
         }
     }
 
+    /**
+     * Método original mantenido para compatibilidad
+     */
+    public void finalizarViaje(Long idEquipo) {
+        finalizarViajeConCalculo(idEquipo, 0.0, null);
+    }
 
-    // Método para obtener datos del viaje finalizado incluyendo la unidad de medida
+    /**
+     * Crea la estructura de datos del equipo
+     */
+    private Map<String, Object> crearEquipoData(EquipoSigema equipoInfo) {
+        Map<String, Object> equipoData = new HashMap<>();
+        equipoData.put("id", equipoInfo.getId());
+        equipoData.put("latitud", equipoInfo.getLatitud());
+        equipoData.put("longitud", equipoInfo.getLongitud());
+
+        // Unidad de medida del modelo de equipo
+        if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
+            equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida().toString());
+        }
+
+        // Id de la unidad física
+        if (equipoInfo.getUnidad() != null) {
+            equipoData.put("idUnidad", equipoInfo.getUnidad().getId());
+        }
+
+        return equipoData;
+    }
+
+    /**
+     * Crea la estructura de datos de la posición
+     */
+    private Map<String, Object> crearPosicionData(Posicion posicion) {
+        Map<String, Object> posicionData = new HashMap<>();
+        posicionData.put("timestamp", posicion.getFecha());
+        posicionData.put("latitud", posicion.getLatitud());
+        posicionData.put("longitud", posicion.getLongitud());
+        posicionData.put("esFinal", posicion.isFin());
+        return posicionData;
+    }
+
+    /**
+     * Actualiza los cálculos intermedios mientras el viaje está en curso
+     */
+    /**
+     * Actualiza los cálculos finales al terminar el viaje
+     */
+    private void actualizarCalculosFinales(Map<String, Object> viajeData, double valorCalculado, ReporteFinViaje reporte) {
+        Map<String, Object> calculos = (Map<String, Object>) viajeData.get("calculos");
+        if (calculos == null) {
+            calculos = new HashMap<>();
+            viajeData.put("calculos", calculos);
+        }
+
+        // Obtener unidad de medida antes de los cálculos
+        String unidadMedida = obtenerUnidadMedidaDesdeViaje(viajeData);
+
+        // Usar datos del reporte si está disponible
+        double totalHoras = reporte != null ? reporte.getTotalHoras() : 0.0;
+        double totalKilometros = reporte != null ? reporte.getTotalKMs() : 0.0;
+
+        calculos.put("totalHoras", totalHoras);
+        calculos.put("totalKilometros", totalKilometros);
+
+        // Valor calculado según unidad de medida
+        calculos.put("valorSegunUnidadMedida", valorCalculado);
+        calculos.put("fechaCalculo", new Date());
+
+        // Información adicional del cálculo
+        calculos.put("unidadMedidaUtilizada", unidadMedida);
+
+        // NUEVO: Agregar campos específicos para HT y KM según la unidad de medida
+        if ("HT".equals(unidadMedida)) {
+            calculos.put("ht", valorCalculado);  // Guardar las horas trabajadas
+            calculos.put("km", 0.0);            // KM en 0 cuando se mide por horas
+        } else if ("KMs".equals(unidadMedida)) {
+            calculos.put("km", valorCalculado);  // Guardar los kilómetros
+            calculos.put("ht", 0.0);            // HT en 0 cuando se mide por kilómetros
+        } else {
+            // Caso por defecto - guardar ambos valores
+            calculos.put("ht", totalHoras);
+            calculos.put("km", totalKilometros);
+        }
+
+        Map<String, Object> detalleCalculo = new HashMap<>();
+        detalleCalculo.put("tipoCalculo", unidadMedida);
+        detalleCalculo.put("valorEnviado", valorCalculado);
+        detalleCalculo.put("horasCalculadas", totalHoras);
+        detalleCalculo.put("kilometrosCalculados", totalKilometros);
+        calculos.put("detalleCalculo", detalleCalculo);
+
+        logger.info("Cálculos finales actualizados - Unidad: {}, Valor final: {}, HT: {}, KM: {}",
+                unidadMedida, valorCalculado, calculos.get("ht"), calculos.get("km"));
+    }
+
+    /**
+     * Actualiza los cálculos intermedios mientras el viaje está en curso
+     */
+    private void actualizarCalculosIntermedios(Map<String, Object> viajeData, List<Map<String, Object>> posiciones) {
+        try {
+            // Obtener cálculos existentes
+            Map<String, Object> calculos = (Map<String, Object>) viajeData.get("calculos");
+            if (calculos == null) {
+                calculos = new HashMap<>();
+                viajeData.put("calculos", calculos);
+            }
+
+            // Calcular totales básicos
+            double totalKm = calcularDistanciaTotalKm(posiciones);
+            double totalHoras = calcularTiempoTotalHoras(posiciones);
+
+            calculos.put("totalKilometros", totalKm);
+            calculos.put("totalHoras", totalHoras);
+
+            // Determinar valor según unidad de medida
+            String unidadMedida = obtenerUnidadMedidaDesdeViaje(viajeData);
+            double valorCalculado = 0.0;
+
+            if ("HT".equals(unidadMedida)) {
+                valorCalculado = totalHoras;
+                calculos.put("ht", valorCalculado);
+                calculos.put("km", 0.0);
+            } else if ("KMs".equals(unidadMedida)) {
+                valorCalculado = totalKm;
+                calculos.put("km", valorCalculado);
+                calculos.put("ht", 0.0);
+            } else {
+                // Caso por defecto
+                calculos.put("ht", totalHoras);
+                calculos.put("km", totalKm);
+            }
+
+            calculos.put("valorSegunUnidadMedida", valorCalculado);
+            calculos.put("unidadMedidaUtilizada", unidadMedida);
+
+            logger.info("Cálculos intermedios actualizados - Horas: {}, KM: {}, Valor: {} ({}), HT: {}, KM: {}",
+                    totalHoras, totalKm, valorCalculado, unidadMedida, calculos.get("ht"), calculos.get("km"));
+
+        } catch (Exception e) {
+            logger.error("Error al actualizar cálculos intermedios: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Método para inicializar el viaje con los campos HT y KM desde el inicio
+     */
+
+
+    /**
+     * Obtiene la unidad de medida desde los datos del viaje
+     */
+    private String obtenerUnidadMedidaDesdeViaje(Map<String, Object> viajeData) {
+        try {
+            Map<String, Object> equipoInfo = (Map<String, Object>) viajeData.get("equipoInfo");
+            if (equipoInfo != null) {
+                return (String) equipoInfo.get("unidadMedida");
+            }
+        } catch (Exception e) {
+            logger.error("Error al obtener unidad de medida: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Calcula la distancia total en kilómetros
+     */
+    private double calcularDistanciaTotalKm(List<Map<String, Object>> posiciones) {
+        if (posiciones.size() < 2) return 0.0;
+
+        double totalKm = 0.0;
+        for (int i = 1; i < posiciones.size(); i++) {
+            Map<String, Object> anterior = posiciones.get(i - 1);
+            Map<String, Object> actual = posiciones.get(i);
+
+            double lat1 = ((Number) anterior.get("latitud")).doubleValue();
+            double lon1 = ((Number) anterior.get("longitud")).doubleValue();
+            double lat2 = ((Number) actual.get("latitud")).doubleValue();
+            double lon2 = ((Number) actual.get("longitud")).doubleValue();
+
+            double distancia = calcularDistanciaKm(lat1, lon1, lat2, lon2);
+            totalKm += distancia;
+        }
+
+        return totalKm;
+    }
+
+    /**
+     * Calcula el tiempo total en horas
+     */
+    private double calcularTiempoTotalHoras(List<Map<String, Object>> posiciones) {
+        if (posiciones.size() < 2) return 0.0;
+
+        long tiempoTotal = 0;
+        for (int i = 1; i < posiciones.size(); i++) {
+            Map<String, Object> anterior = posiciones.get(i - 1);
+            Map<String, Object> actual = posiciones.get(i);
+
+            Date fechaAnterior = (Date) anterior.get("timestamp");
+            Date fechaActual = (Date) actual.get("timestamp");
+
+            long diferencia = fechaActual.getTime() - fechaAnterior.getTime();
+            tiempoTotal += diferencia;
+        }
+
+        return tiempoTotal / (1000.0 * 60 * 60); // Convertir a horas
+    }
+
+    /**
+     * Calcula la distancia entre dos puntos geográficos
+     */
+    private double calcularDistanciaKm(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371; // Radio de la Tierra en km
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                        Math.sin(dLon/2) * Math.sin(dLon/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    /**
+     * Actualiza la información del equipo con la última posición
+     */
+    private void actualizarEquipoConUltimaPosicion(Map<String, Object> viajeData) {
+        List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
+        if (posiciones != null && !posiciones.isEmpty()) {
+            Map<String, Object> ultimaPosicion = posiciones.get(posiciones.size() - 1);
+            Map<String, Object> equipoData = (Map<String, Object>) viajeData.get("equipoInfo");
+
+            if (equipoData != null) {
+                equipoData.put("latitud", ultimaPosicion.get("latitud"));
+                equipoData.put("longitud", ultimaPosicion.get("longitud"));
+            }
+        }
+    }
+
+    /**
+     * Crea el archivo finalizado con timestamp
+     */
+    private void crearArchivoFinalizado(Long idEquipo, Map<String, Object> viajeData) throws IOException {
+        LocalDateTime now = LocalDateTime.now();
+        String fechaHora = now.format(DateTimeFormatter.ofPattern("ddMMyyyy_HHmm"));
+        String fileNameFinalizado = idEquipo + "_finalizado_" + fechaHora + ".json";
+        File fileFinalizado = new File(jsonStoragePath, fileNameFinalizado);
+
+        objectMapper.writeValue(fileFinalizado, viajeData);
+        logger.info("Viaje finalizado - Archivo creado: {}", fileFinalizado.getAbsolutePath());
+    }
+
+    /**
+     * Elimina el archivo en curso
+     */
+    private void eliminarArchivoEnCurso(File fileEnCurso) {
+        if (fileEnCurso.delete()) {
+            logger.info("Archivo en curso eliminado: {}", fileEnCurso.getAbsolutePath());
+        } else {
+            logger.error("No se pudo eliminar el archivo en curso: {}", fileEnCurso.getAbsolutePath());
+        }
+    }
+
+    // Método para obtener datos del viaje finalizado incluyendo los cálculos
     public Map<String, Object> obtenerDatosViajeParaReporte(Long idEquipo, String fechaHora) {
         try {
             String fileName = idEquipo + "_finalizado_" + fechaHora + ".json";
             File file = new File(jsonStoragePath, fileName);
 
             if (!file.exists()) {
-                System.err.println("Archivo de viaje finalizado no encontrado: " + fileName);
+                logger.error("Archivo de viaje finalizado no encontrado: {}", fileName);
                 return null;
             }
 
             Map<String, Object> viajeData = objectMapper.readValue(file, Map.class);
-            System.out.println("Datos del viaje obtenidos para reporte, incluyendo unidad de medida");
+            logger.info("Datos del viaje obtenidos para reporte, incluyendo cálculos de unidad de medida");
 
             return viajeData;
 
         } catch (IOException e) {
-            System.err.println("Error al obtener datos del viaje: " + e.getMessage());
+            logger.error("Error al obtener datos del viaje: {}", e.getMessage());
             return null;
         }
     }
@@ -241,16 +484,7 @@ public class JsonStorageService implements IJsonStorageService {
             posicionCompleta.put("posicion", posicion);
 
             if (equipoInfo != null) {
-                Map<String, Object> equipoData = new HashMap<>();
-                equipoData.put("id", equipoInfo.getId());
-                equipoData.put("latitud", equipoInfo.getLatitud());
-                equipoData.put("longitud", equipoInfo.getLongitud());
-
-                // Incluir unidad de medida
-                if (equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
-                    equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida());
-                }
-
+                Map<String, Object> equipoData = crearEquipoData(equipoInfo);
                 posicionCompleta.put("equipo", equipoData);
             }
 
@@ -261,10 +495,10 @@ public class JsonStorageService implements IJsonStorageService {
             File file = new File(jsonStoragePath, fileName);
             objectMapper.writeValue(file, posicionCompleta);
 
-            System.out.println("Posición guardada en JSON: " + file.getAbsolutePath());
+            logger.info("Posición guardada en JSON: {}", file.getAbsolutePath());
 
         } catch (IOException e) {
-            System.err.println("Error al guardar posición en JSON: " + e.getMessage());
+            logger.error("Error al guardar posición en JSON: {}", e.getMessage());
         }
     }
 
@@ -276,18 +510,29 @@ public class JsonStorageService implements IJsonStorageService {
             reporteCompleto.put("tipo", tipo);
             reporteCompleto.put("reporte", reporte);
 
+            // Agregar información de cálculos si está disponible
+            if (reporte.getUnidadMedida() != null) {
+                Map<String, Object> calculosInfo = new HashMap<>();
+                calculosInfo.put("unidadMedida", reporte.getUnidadMedida().toString());
+                calculosInfo.put("valorPrincipal", reporte.getUnidadMedida() == UnidadMedida.HT ?
+                        reporte.getHorasDeTrabajo() : reporte.getKilometros());
+                calculosInfo.put("horasCalculadas", reporte.getHorasDeTrabajo());
+                calculosInfo.put("kilometrosCalculados", reporte.getKilometros());
+                reporteCompleto.put("calculos", calculosInfo);
+            }
+
             String fileName = String.format("%s_equipo_%d_%s.json",
                     tipo,
                     reporte.getIdEquipo(),
-                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
+                    LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm")));
 
             File file = new File(jsonStoragePath, fileName);
             objectMapper.writeValue(file, reporteCompleto);
 
-            System.out.println("Reporte guardado en JSON: " + file.getAbsolutePath());
+            logger.info("Reporte guardado en JSON: {}", file.getAbsolutePath());
 
         } catch (IOException e) {
-            System.err.println("Error al guardar reporte en JSON: " + e.getMessage());
+            logger.error("Error al guardar reporte en JSON: {}", e.getMessage());
         }
     }
 
@@ -309,10 +554,10 @@ public class JsonStorageService implements IJsonStorageService {
             File file = new File(jsonStoragePath, fileName);
             objectMapper.writeValue(file, requestData);
 
-            System.out.println("Request guardado en JSON: " + file.getAbsolutePath());
+            logger.info("Request guardado en JSON: {}", file.getAbsolutePath());
 
         } catch (IOException e) {
-            System.err.println("Error al guardar request en JSON: " + e.getMessage());
+            logger.error("Error al guardar request en JSON: {}", e.getMessage());
         }
     }
 
@@ -333,10 +578,10 @@ public class JsonStorageService implements IJsonStorageService {
             File file = new File(jsonStoragePath, fileName);
             objectMapper.writeValue(file, responseData);
 
-            System.out.println("Response guardado en JSON: " + file.getAbsolutePath());
+            logger.info("Response guardado en JSON: {}", file.getAbsolutePath());
 
         } catch (IOException e) {
-            System.err.println("Error al guardar response en JSON: " + e.getMessage());
+            logger.error("Error al guardar response en JSON: {}", e.getMessage());
         }
     }
 }
