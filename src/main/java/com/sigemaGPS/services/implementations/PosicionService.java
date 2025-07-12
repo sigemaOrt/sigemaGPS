@@ -49,7 +49,6 @@ public class PosicionService implements IPosicionService {
 
     @PostConstruct
     public void init() {
-        System.out.println("=== CONFIGURACIÓN CARGADA ===");
         System.out.println("sigema.backend.url = " + sigemaBackendUrl);
         if (sigemaBackendUrl == null || sigemaBackendUrl.isEmpty()) {
             throw new RuntimeException("La propiedad sigema.backend.url no está configurada correctamente");
@@ -93,7 +92,6 @@ public class PosicionService implements IPosicionService {
 
     @Override
     public ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception {
-        System.out.println("Finalizando trabajo para equipo: " + idEquipo);
 
         Timer timer = timersEquipos.remove(idEquipo);
         if (timer != null) timer.cancel();
@@ -121,7 +119,6 @@ public class PosicionService implements IPosicionService {
         // Calcular valor según unidad de medida
         double valorCalculado = calcularValorSegunUnidadMedida(equipo, reporte);
 
-        // CAMBIO IMPORTANTE: Usar el nuevo método con cálculos
         jsonStorageService.finalizarViajeConCalculo(idEquipo, valorCalculado, reporte);
 
         // Crear DTO con el valor calculado
@@ -129,8 +126,6 @@ public class PosicionService implements IPosicionService {
                 idEquipo, lat, lon, posicionFinal.getFecha(),
                 equipo, reporte, valorCalculado
         );
-
-        enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
 
         String destinatario = "cr.velozz@gmail.com";
         String asunto = "Trabajo Finalizado - Equipo " + idEquipo;
@@ -176,9 +171,11 @@ public class PosicionService implements IPosicionService {
                 + "</div>";
 
 
+        boolean envioExitoso = enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
 
-
-        emailService.enviarCorreoFinalizacionTrabajo(idEquipo, destinatario, asunto, cuerpo);
+        if (!envioExitoso) {
+            emailService.enviarCorreoFinalizacionTrabajo(idEquipo, destinatario, asunto, cuerpo);
+        }
 
 
         return dto;
@@ -298,62 +295,84 @@ public class PosicionService implements IPosicionService {
     /**
      * Envía el reporte al backend principal
      */
-    private void enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken, EquipoSigema equipo) {
-        try {
-            logger.info("=== ENVIANDO REPORTE AL BACKEND PRINCIPAL ===");
-            logger.info("idEquipo: {}", dto.getIdEquipo());
-            logger.info("idUnidad: {}", dto.getUnidad());
-            logger.info("unidadMedida: {}", dto.getUnidadMedida());
-            logger.info("horasDeTrabajo: {}", dto.getHorasDeTrabajo());
-            logger.info("kilometros: {}", dto.getKilometros());
-            logger.info("latitud: {}", dto.getLatitud());
-            logger.info("longitud: {}", dto.getLongitud());
+    private boolean enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken, EquipoSigema equipo){
+        int intentos = 0;
+        boolean enviado = false;
+        Exception ultimoError = null;
 
-            // Validación final antes del envío
-            if (dto.getUnidad() == null || dto.getUnidad() == 0) {
-                throw new SigemaException("El idUnidad no puede ser nulo o cero");
+        while (intentos < 3 && !enviado) {
+            try {
+                logger.info("Intento {} de envío al backend principal", intentos + 1);
+
+                if (dto.getUnidad() == null || dto.getUnidad() == 0) {
+                    throw new SigemaException("El idUnidad no puede ser nulo o cero");
+                }
+
+                ReporteSigemaDTO reporteParaEnvio = new ReporteSigemaDTO();
+                reporteParaEnvio.setIdEquipo(dto.getIdEquipo());
+                reporteParaEnvio.setLatitud(dto.getLatitud());
+                reporteParaEnvio.setLongitud(dto.getLongitud());
+                reporteParaEnvio.setFecha(dto.getFecha());
+                reporteParaEnvio.setHorasDeTrabajo(dto.getHorasDeTrabajo());
+                reporteParaEnvio.setKilometros(dto.getKilometros());
+                reporteParaEnvio.setIdUnidad(dto.getUnidad());
+                reporteParaEnvio.setUnidadMedida(dto.getUnidadMedida());
+
+                HttpHeaders headers = new HttpHeaders();
+                headers.setBearerAuth(jwtToken);
+                headers.setContentType(MediaType.APPLICATION_JSON);
+
+                HttpEntity<ReporteSigemaDTO> requestEntity = new HttpEntity<>(reporteParaEnvio, headers);
+                String url = sigemaBackendUrl + "/api/reporte";
+
+                ResponseEntity<String> response = restTemplate.exchange(
+                        url,
+                        HttpMethod.POST,
+                        requestEntity,
+                        String.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful()) {
+                    logger.info("✅ Reporte enviado exitosamente. Estado: {}", response.getStatusCode());
+                    enviado = true;
+                } else {
+                    logger.warn("⚠️ Respuesta no exitosa: {}", response.getStatusCode());
+                    intentos++;
+                }
+
+            } catch (Exception e) {
+                ultimoError = e;
+                logger.error("Error al enviar el reporte (intento {}): {}", intentos + 1, e.getMessage());
+                intentos++;
             }
-
-            // Crear el reporte final para envío
-            ReporteSigemaDTO reporteParaEnvio = new ReporteSigemaDTO();
-            reporteParaEnvio.setIdEquipo(dto.getIdEquipo());
-            reporteParaEnvio.setLatitud(dto.getLatitud());
-            reporteParaEnvio.setLongitud(dto.getLongitud());
-            reporteParaEnvio.setFecha(dto.getFecha());
-            reporteParaEnvio.setHorasDeTrabajo(dto.getHorasDeTrabajo());
-            reporteParaEnvio.setKilometros(dto.getKilometros());
-            reporteParaEnvio.setIdUnidad(dto.getUnidad());
-            reporteParaEnvio.setUnidadMedida(dto.getUnidadMedida());
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(jwtToken);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-
-            HttpEntity<ReporteSigemaDTO> requestEntity = new HttpEntity<>(reporteParaEnvio, headers);
-
-            String url = sigemaBackendUrl + "/api/reporte";
-
-            ResponseEntity<String> response = restTemplate.exchange(
-                    url,
-                    HttpMethod.POST,
-                    requestEntity,
-                    String.class
-            );
-
-            logger.info("Reporte enviado exitosamente. Estado: {}", response.getStatusCode());
-
-        } catch (Exception e) {
-            logger.error("Error al enviar reporte al backend principal: {}", e.getMessage());
-            logger.error("Error detallado: ", e);
-
-            // Si es un error de validación, re-lanzar para que el controlador lo maneje
-            if (e instanceof SigemaException) {
-                throw (SigemaException) e;
-            }
-
-            throw new SigemaException("Error al enviar reporte al backend principal: " + e.getMessage());
         }
+
+        // Si no se logró enviar después de 3 intentos, se manda el mail
+        if (!enviado && intentos >= 3) {
+            logger.error("❌ No se pudo enviar el reporte tras 3 intentos. Enviando correo de alerta...");
+
+            String destinatario = "cr.velozz@gmail.com";
+            String asunto = "🚨 Fallo al enviar reporte del equipo " + dto.getIdEquipo();
+            String cuerpo = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto;'>"
+                    + "<h2 style='color: #e74c3c;'>Error al Enviar Reporte</h2>"
+                    + "<p>No se pudo enviar el reporte al backend principal luego de 3 intentos.</p>"
+                    + "<ul>"
+                    + "<li><strong>Equipo:</strong> " + dto.getIdEquipo() + "</li>"
+                    + "<li><strong>Latitud:</strong> " + dto.getLatitud() + "</li>"
+                    + "<li><strong>Longitud:</strong> " + dto.getLongitud() + "</li>"
+                    + "<li><strong>Horas de trabajo:</strong> " + dto.getHorasDeTrabajo() + "</li>"
+                    + "<li><strong>Kilómetros:</strong> " + dto.getKilometros() + "</li>"
+                    + "</ul>"
+                    + (ultimoError != null ? "<p><strong>Error:</strong> " + ultimoError.getMessage() + "</p>" : "")
+                    + "<p style='font-size: 12px; color: #999;'>Este mensaje fue generado automáticamente.</p>"
+                    + "</div>";
+
+            emailService.enviarCorreoFinalizacionTrabajo(dto.getIdEquipo(), destinatario, asunto, cuerpo);
+        }
+        return enviado;
     }
+
+
 
     @Override
     public void eliminarTrabajo(Long idEquipo) throws Exception {
