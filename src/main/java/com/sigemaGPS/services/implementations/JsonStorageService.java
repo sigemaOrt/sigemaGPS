@@ -178,6 +178,22 @@ public class JsonStorageService implements IJsonStorageService {
             // Actualizar información del equipo con última posición
             actualizarEquipoConUltimaPosicion(viajeData);
 
+            // Si el reporte viene sin valores, recalcular con las posiciones
+            if (reporte != null && reporte.getTotalHoras() == 0.0 && reporte.getTotalKMs() == 0.0) {
+                List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
+
+                if (posiciones != null && posiciones.size() > 1) {
+                    // Usar los métodos de cálculo existentes
+                    double totalHoras = calcularTiempoTotalHoras(posiciones);
+                    double totalKMs = calcularDistanciaTotalKm(posiciones);
+
+                    reporte.setTotalHoras(totalHoras);
+                    reporte.setTotalKMs(totalKMs);
+
+                    logger.info("Se calcularon valores para el reporte porque venía vacío - Horas: {}, KM: {}", totalHoras, totalKMs);
+                }
+            }
+
             // Actualizar cálculos finales
             actualizarCalculosFinales(viajeData, valorCalculado, reporte);
 
@@ -205,8 +221,13 @@ public class JsonStorageService implements IJsonStorageService {
     private Map<String, Object> crearEquipoData(EquipoSigema equipoInfo) {
         Map<String, Object> equipoData = new HashMap<>();
         equipoData.put("id", equipoInfo.getId());
-        equipoData.put("latitud", equipoInfo.getLatitud());
-        equipoData.put("longitud", equipoInfo.getLongitud());
+
+        // CAMBIO: Mayor precisión en coordenadas (8 decimales)
+        double latitudPrecisa = Math.round(equipoInfo.getLatitud() * 100000000.0) / 100000000.0;
+        double longitudPrecisa = Math.round(equipoInfo.getLongitud() * 100000000.0) / 100000000.0;
+
+        equipoData.put("latitud", latitudPrecisa);
+        equipoData.put("longitud", longitudPrecisa);
 
         // Unidad de medida del modelo de equipo
         if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
@@ -227,9 +248,16 @@ public class JsonStorageService implements IJsonStorageService {
     private Map<String, Object> crearPosicionData(Posicion posicion) {
         Map<String, Object> posicionData = new HashMap<>();
         posicionData.put("timestamp", posicion.getFecha());
-        posicionData.put("latitud", posicion.getLatitud());
-        posicionData.put("longitud", posicion.getLongitud());
+        System.out.println();
+
+        // Formatear latitud y longitud con 6 decimales y guardar como String
+        String latitudFormateada = String.format(Locale.US, "%.6f", posicion.getLatitud());
+        String longitudFormateada = String.format(Locale.US, "%.6f", posicion.getLongitud());
+
+        posicionData.put("latitud", latitudFormateada);
+        posicionData.put("longitud", longitudFormateada);
         posicionData.put("esFinal", posicion.isFin());
+
         return posicionData;
     }
 
@@ -246,46 +274,55 @@ public class JsonStorageService implements IJsonStorageService {
             viajeData.put("calculos", calculos);
         }
 
-        // Obtener unidad de medida antes de los cálculos
+        // Obtener unidad de medida
         String unidadMedida = obtenerUnidadMedidaDesdeViaje(viajeData);
 
-        // Usar datos del reporte si está disponible
+        // Obtener datos del reporte si están disponibles
         double totalHoras = reporte != null ? reporte.getTotalHoras() : 0.0;
         double totalKilometros = reporte != null ? reporte.getTotalKMs() : 0.0;
 
-        calculos.put("totalHoras", totalHoras);
-        calculos.put("totalKilometros", totalKilometros);
+        // CAMBIO: Redondear HT a 2 decimales y KM a 6 decimales (más precisión)
+        double horasRedondeadas = Math.round(totalHoras * 100.0) / 100.0;
+        double kilometrosRedondeados = Math.round(totalKilometros * 1000000.0) / 1000000.0;
 
-        // Valor calculado según unidad de medida
-        calculos.put("valorSegunUnidadMedida", valorCalculado);
+        // Para el valor calculado, aplicar precisión según unidad de medida
+        double valorRedondeado;
+        if ("HT".equals(unidadMedida)) {
+            valorRedondeado = Math.round(valorCalculado * 100.0) / 100.0; // 2 decimales para HT
+        } else if ("KMs".equals(unidadMedida)) {
+            valorRedondeado = Math.round(valorCalculado * 1000000.0) / 1000000.0; // 6 decimales para KM
+        } else {
+            valorRedondeado = Math.round(valorCalculado * 100.0) / 100.0; // Por defecto 2 decimales
+        }
+
+        calculos.put("totalHoras", horasRedondeadas);
+        calculos.put("totalKilometros", kilometrosRedondeados);
+        calculos.put("valorSegunUnidadMedida", valorRedondeado);
         calculos.put("fechaCalculo", new Date());
-
-        // Información adicional del cálculo
         calculos.put("unidadMedidaUtilizada", unidadMedida);
 
-        // NUEVO: Agregar campos específicos para HT y KM según la unidad de medida
         if ("HT".equals(unidadMedida)) {
-            calculos.put("ht", valorCalculado);  // Guardar las horas trabajadas
-            calculos.put("km", 0.0);            // KM en 0 cuando se mide por horas
+            calculos.put("ht", valorRedondeado); // 2 decimales
+            calculos.put("km", 0.0);
         } else if ("KMs".equals(unidadMedida)) {
-            calculos.put("km", valorCalculado);  // Guardar los kilómetros
-            calculos.put("ht", 0.0);            // HT en 0 cuando se mide por kilómetros
+            calculos.put("km", valorRedondeado); // 6 decimales
+            calculos.put("ht", 0.0);
         } else {
-            // Caso por defecto - guardar ambos valores
-            calculos.put("ht", totalHoras);
-            calculos.put("km", totalKilometros);
+            calculos.put("ht", horasRedondeadas);
+            calculos.put("km", kilometrosRedondeados);
         }
 
         Map<String, Object> detalleCalculo = new HashMap<>();
         detalleCalculo.put("tipoCalculo", unidadMedida);
-        detalleCalculo.put("valorEnviado", valorCalculado);
-        detalleCalculo.put("horasCalculadas", totalHoras);
-        detalleCalculo.put("kilometrosCalculados", totalKilometros);
+        detalleCalculo.put("valorEnviado", valorRedondeado);
+        detalleCalculo.put("horasCalculadas", horasRedondeadas);
+        detalleCalculo.put("kilometrosCalculados", kilometrosRedondeados);
         calculos.put("detalleCalculo", detalleCalculo);
 
         logger.info("Cálculos finales actualizados - Unidad: {}, Valor final: {}, HT: {}, KM: {}",
-                unidadMedida, valorCalculado, calculos.get("ht"), calculos.get("km"));
+                unidadMedida, valorRedondeado, calculos.get("ht"), calculos.get("km"));
     }
+
 
     /**
      * Actualiza los cálculos intermedios mientras el viaje está en curso
@@ -303,32 +340,36 @@ public class JsonStorageService implements IJsonStorageService {
             double totalKm = calcularDistanciaTotalKm(posiciones);
             double totalHoras = calcularTiempoTotalHoras(posiciones);
 
-            calculos.put("totalKilometros", totalKm);
-            calculos.put("totalHoras", totalHoras);
+            // CAMBIO: Aplicar precisión específica
+            double horasRedondeadas = Math.round(totalHoras * 100.0) / 100.0; // 2 decimales
+            double kilometrosRedondeados = Math.round(totalKm * 1000000.0) / 1000000.0; // 6 decimales
+
+            calculos.put("totalKilometros", kilometrosRedondeados);
+            calculos.put("totalHoras", horasRedondeadas);
 
             // Determinar valor según unidad de medida
             String unidadMedida = obtenerUnidadMedidaDesdeViaje(viajeData);
             double valorCalculado = 0.0;
 
             if ("HT".equals(unidadMedida)) {
-                valorCalculado = totalHoras;
+                valorCalculado = horasRedondeadas; // Ya redondeado a 2 decimales
                 calculos.put("ht", valorCalculado);
                 calculos.put("km", 0.0);
             } else if ("KMs".equals(unidadMedida)) {
-                valorCalculado = totalKm;
+                valorCalculado = kilometrosRedondeados; // Ya redondeado a 6 decimales
                 calculos.put("km", valorCalculado);
                 calculos.put("ht", 0.0);
             } else {
                 // Caso por defecto
-                calculos.put("ht", totalHoras);
-                calculos.put("km", totalKm);
+                calculos.put("ht", horasRedondeadas);
+                calculos.put("km", kilometrosRedondeados);
             }
 
             calculos.put("valorSegunUnidadMedida", valorCalculado);
             calculos.put("unidadMedidaUtilizada", unidadMedida);
 
             logger.info("Cálculos intermedios actualizados - Horas: {}, KM: {}, Valor: {} ({}), HT: {}, KM: {}",
-                    totalHoras, totalKm, valorCalculado, unidadMedida, calculos.get("ht"), calculos.get("km"));
+                    horasRedondeadas, kilometrosRedondeados, valorCalculado, unidadMedida, calculos.get("ht"), calculos.get("km"));
 
         } catch (Exception e) {
             logger.error("Error al actualizar cálculos intermedios: {}", e.getMessage());
@@ -389,15 +430,17 @@ public class JsonStorageService implements IJsonStorageService {
             Map<String, Object> anterior = posiciones.get(i - 1);
             Map<String, Object> actual = posiciones.get(i);
 
-            Date fechaAnterior = (Date) anterior.get("timestamp");
-            Date fechaActual = (Date) actual.get("timestamp");
+            // ✅ Corregido: convertir Long a Date
+            long tsAnterior = ((Number) anterior.get("timestamp")).longValue();
+            long tsActual = ((Number) actual.get("timestamp")).longValue();
 
-            long diferencia = fechaActual.getTime() - fechaAnterior.getTime();
+            long diferencia = tsActual - tsAnterior;
             tiempoTotal += diferencia;
         }
 
-        return tiempoTotal / (1000.0 * 60 * 60); // Convertir a horas
+        return tiempoTotal / (1000.0 * 60 * 60); // convertir milisegundos a horas
     }
+
 
     /**
      * Calcula la distancia entre dos puntos geográficos
