@@ -173,9 +173,9 @@ public class PosicionService implements IPosicionService {
 
         boolean envioExitoso = enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
 
-        if (!envioExitoso) {
-            emailService.enviarCorreoFinalizacionTrabajo(idEquipo, destinatario, asunto, cuerpo);
-        }
+//        if (!envioExitoso) {
+//            emailService.enviarCorreoFinalizacionTrabajo(idEquipo, destinatario, asunto, cuerpo);
+//        }
 
 
         return dto;
