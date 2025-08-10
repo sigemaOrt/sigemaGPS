@@ -30,7 +30,7 @@ public class SecurityConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**")
-                        .allowedOrigins("*") //CAMBIAR POR LA API DEL SIGEMA BACK
+                        .allowedOrigins("https://sigemabe-d0gke3fdbnfza9et.canadacentral-01.azurewebsites.net", "*", "https://gentle-coast-029a3281e.1.azurestaticapps.net") //CAMBIAR POR LA API DEL SIGEMA BACK
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                         .allowedHeaders("*");
             }
