@@ -98,6 +98,7 @@ public class PosicionService implements IPosicionService {
 
         double lat = ubicacion.getLatitud();
         double lon = ubicacion.getLongitud();
+        String emails = String.join(",", ubicacion.getEmails());
 
         Posicion posicionFinal = new Posicion();
         posicionFinal.setIdEquipo(idEquipo);
@@ -127,51 +128,8 @@ public class PosicionService implements IPosicionService {
                 equipo, reporte, valorCalculado
         );
 
-//        String destinatario = "cr.velozz@gmail.com";
-//        String asunto = "Trabajo Finalizado - Equipo " + idEquipo;
-//        String cuerpo = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 8px; padding: 20px; background-color: #f9f9f9;'>"
-//                + "<h2 style='color: #2c3e50; text-align: center;'>🚀 Trabajo Finalizado</h2>"
-//                + "<p style='font-size: 16px; color: #34495e;'>Hola,</p>"
-//                + "<p style='font-size: 16px; color: #34495e;'>Se ha finalizado el trabajo para el equipo con los siguientes detalles:</p>"
-//                + "<table style='width: 100%; border-collapse: collapse; margin-top: 20px;'>"
-//                + "<tr style='background-color: #3498db; color: white;'>"
-//                + "<th style='padding: 10px; text-align: left; border-radius: 6px 0 0 0;'>Detalle</th>"
-//                + "<th style='padding: 10px; text-align: right; border-radius: 0 6px 0 0;'>Valor</th>"
-//                + "</tr>"
-//                + "<tr style='background-color: #ecf0f1;'>"
-//                + "<td style='padding: 10px;'>Equipo</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + idEquipo + "</td>"
-//                + "</tr>"
-//                + "<tr>"
-//                + "<td style='padding: 10px;'>Latitud</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + lat + "</td>"
-//                + "</tr>"
-//                + "<tr style='background-color: #ecf0f1;'>"
-//                + "<td style='padding: 10px;'>Longitud</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + lon + "</td>"
-//                + "</tr>"
-//                + "<tr>"
-//                + "<td style='padding: 10px;'>Horas de trabajo</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + dto.getHorasDeTrabajo() + "</td>"
-//                + "</tr>"
-//                + "<tr style='background-color: #ecf0f1;'>"
-//                + "<td style='padding: 10px;'>Kilómetros recorridos</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + dto.getKilometros() + "</td>"
-//                + "</tr>"
-//                + "<tr>"
-//                + "<td style='padding: 10px;'>Matrícula</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + equipo.getMatricula() + "</td>"
-//                + "</tr>"
-//                + "<tr style='background-color: #ecf0f1;'>"
-//                + "<td style='padding: 10px;'>Modelo</td>"
-//                + "<td style='padding: 10px; text-align: right; font-weight: bold;'>" + equipo.getModeloEquipo().getModelo() + "</td>"
-//                + "</tr>"
-//                + "</table>"
-//                + "<p style='margin-top: 20px; font-size: 14px; color: #7f8c8d; text-align: center;'>Sigema APP.</p>"
-//                + "</div>";
 
-
-        boolean envioExitoso = enviarReporteAlBackendPrincipal(dto, jwtToken, equipo);
+        boolean envioExitoso = enviarReporteAlBackendPrincipal(dto, jwtToken, equipo, emails);
 
 //        if (!envioExitoso) {
 //            emailService.enviarCorreoFinalizacionTrabajo(idEquipo, destinatario, asunto, cuerpo);
@@ -295,7 +253,7 @@ public class PosicionService implements IPosicionService {
     /**
      * Envía el reporte al backend principal
      */
-    private boolean enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken, EquipoSigema equipo){
+    private boolean enviarReporteAlBackendPrincipal(ReporteSigemaDTO dto, String jwtToken, EquipoSigema equipo, String emails){
         int intentos = 0;
         boolean enviado = false;
         Exception ultimoError = null;
@@ -351,7 +309,7 @@ public class PosicionService implements IPosicionService {
         if (!enviado && intentos >= 3) {
             logger.error("❌ No se pudo enviar el reporte tras 3 intentos. Enviando correo de alerta...");
 
-            String destinatario = "cr.velozz@gmail.com";
+            String destinatario = emails;
             String asunto = "🚨 Fallo al enviar reporte del equipo " + dto.getIdEquipo();
             String cuerpo = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto;'>"
                     + "<h2 style='color: #e74c3c;'>Error al Enviar Reporte</h2>"
