@@ -1,6 +1,3 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
 name: Build and deploy JAR app to Azure Web App - sigemaBE2
 
 on:
@@ -10,11 +7,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: windows-latest
     permissions:
-      contents: read #This is required for actions/checkout
-
+      contents: read # para actions/checkout
+      id-token: write # para azure/login
+    
     steps:
       - uses: actions/checkout@v4
 
@@ -27,25 +25,6 @@ jobs:
       - name: Build with Maven
         run: mvn clean install -DskipTests
 
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v4
-        with:
-          name: java-app
-          path: '${{ github.workspace }}/target/*.jar'
-
-  deploy:
-    runs-on: windows-latest
-    needs: build
-    permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
-
-    steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v4
-        with:
-          name: java-app
-      
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -54,11 +33,8 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_837B32D5AB3844EE8C576DC8FF303287 }}
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'sigemaBE2'
           slot-name: 'Production'
-          package: '*.jar'
-
-          
+          package: './target/*.jar'
