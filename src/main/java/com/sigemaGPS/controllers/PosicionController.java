@@ -13,7 +13,6 @@ import jakarta.servlet.http.HttpServletRequest;
 
 @RestController
 @RequestMapping("/api/posiciones")
-@CrossOrigin(origins = "*")
 public class PosicionController {
 
     private final IPosicionService posicionService;
@@ -45,10 +44,6 @@ public class PosicionController {
             String jwtToken = getTokenFromRequest(request);
             ReporteSigemaDTO dto = posicionService.iniciarTrabajo(idEquipo, jwtToken, ubicacion);
             return ResponseEntity.ok(dto);
-        } catch (SigemaException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(401).body(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error interno al iniciar trabajo: " + e.getMessage());
         }
@@ -63,10 +58,6 @@ public class PosicionController {
             String jwtToken = getTokenFromRequest(request);
             ReporteSigemaDTO dto = posicionService.finalizarTrabajo(idEquipo, jwtToken, ubicacion);
             return ResponseEntity.ok(dto);
-        } catch (SigemaException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(401).body(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error interno al finalizar trabajo: " + e.getMessage());
         }

@@ -26,15 +26,17 @@ public class SecurityConfig {
     public WebMvcConfigurer webConfigurer() {
         return new WebMvcConfigurer() {
 
-            // CORS
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**")
-                        .allowedOrigins("https://sigemabe-d0gke3fdbnfza9et.canadacentral-01.azurewebsites.net",//BE general
-                                        "https://green-mud-0cddc320f.1.azurestaticapps.net",//front GPS
-                                        "https://gentle-coast-029a3281e.1.azurestaticapps.net") 
+                        .allowedOrigins(
+                                "https://sigemabe-d0gke3fdbnfza9et.canadacentral-01.azurewebsites.net",
+                                "https://green-mud-0cddc320f.1.azurestaticapps.net",
+                                "https://gentle-coast-029a3281e.1.azurestaticapps.net"
+                        )
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                        .allowedHeaders("*");
+                        .allowedHeaders("*")
+                        .exposedHeaders("Authorization");
             }
 
             // Rutas públicas para archivos
