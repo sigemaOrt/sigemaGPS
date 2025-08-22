@@ -56,6 +56,11 @@ public class PosicionController {
             HttpServletRequest request) {
         try {
             String jwtToken = getTokenFromRequest(request);
+
+            if(ubicacion.getEmails() == null){
+                ubicacion.setEmails(new String[0]);
+            }
+
             ReporteSigemaDTO dto = posicionService.finalizarTrabajo(idEquipo, jwtToken, ubicacion);
             return ResponseEntity.ok(dto);
         } catch (Exception e) {

@@ -25,6 +25,11 @@ public class EmailService implements IEmailService {
             MimeMessage mensaje = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mensaje, true, "UTF-8");
             helper.setFrom(remitente);
+
+            if(destinatario == null || destinatario.isEmpty()){
+                destinatario = remitente;
+            }
+
             helper.setTo(destinatario);
             helper.setSubject(asunto);
             helper.setText(cuerpo, true);
