@@ -7,7 +7,7 @@ import java.util.List;
 @Getter
 @Setter
 public class PosicionClienteDTO {
-    private Double latitud;
-    private Double longitud;
+    private double latitud;
+    private double longitud;
     private List<String> emails;
 }
