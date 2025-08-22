@@ -1,16 +1,18 @@
 package com.sigemaGPS.Dto;
 
+import java.util.List;
+
 public class PosicionClienteDTO {
     private double latitud;
     private double longitud;
 
-    public String[] getEmails() {
+    public List<String> getEmails() {
         return emails;
     }
-    public void setEmails(String[] emails) {
+    public void setEmails(List<String> emails) {
         this.emails = emails;
     }
-    private String[] emails;
+    private List<String> emails;
     public double getLatitud() {
         return latitud;
     }

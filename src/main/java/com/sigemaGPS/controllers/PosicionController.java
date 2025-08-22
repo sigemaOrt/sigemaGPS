@@ -11,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.util.ArrayList;
+
 @RestController
 @RequestMapping("/api/posiciones")
 public class PosicionController {
@@ -58,7 +60,7 @@ public class PosicionController {
             String jwtToken = getTokenFromRequest(request);
 
             if(ubicacion.getEmails() == null){
-                ubicacion.setEmails(new String[0]);
+                ubicacion.setEmails(new ArrayList<>());
             }
 
             ReporteSigemaDTO dto = posicionService.finalizarTrabajo(idEquipo, jwtToken, ubicacion);
