@@ -227,10 +227,6 @@ public class PosicionService implements IPosicionService {
             try {
                 logger.info("Intento {} de envío al backend principal", intentos + 1);
 
-                if (dto.getUnidad() == null || dto.getUnidad() == 0) {
-                    throw new SigemaException("El idUnidad no puede ser nulo o cero");
-                }
-
                 ReporteSigemaDTO reporteParaEnvio = new ReporteSigemaDTO();
                 reporteParaEnvio.setIdEquipo(dto.getIdEquipo());
                 reporteParaEnvio.setLatitud(dto.getLatitud());
