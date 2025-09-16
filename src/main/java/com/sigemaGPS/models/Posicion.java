@@ -9,6 +9,7 @@ public class Posicion implements Serializable, Comparable<Posicion> {
     private Long idEquipo;
     private double latitud;
     private double longitud;
+    private String unidadMedida;
     private Date fecha;
     private boolean fin;
 
@@ -58,6 +59,14 @@ public class Posicion implements Serializable, Comparable<Posicion> {
 
     public void setFin(boolean fin) {
         this.fin = fin;
+    }
+
+    public String getUnidadMedida() {
+        return unidadMedida;
+    }
+
+    public void setUnidadMedida(String unidadMedida) {
+        this.unidadMedida = unidadMedida;
     }
 
     @Override

@@ -14,7 +14,8 @@ public interface IPosicionService {
     ReporteFinViaje obtenerReporteViaje(Long idEquipo, LocalDate fecha) throws Exception;
     boolean estaEnUso(Long idEquipo) throws Exception;
     void setEnUso(Long idEquipo, boolean enUso) throws Exception;
-    ReporteSigemaDTO iniciarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion)  throws Exception;
+    void iniciarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion)  throws Exception;
     ReporteSigemaDTO finalizarTrabajo(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception;
     void eliminarTrabajo(Long idEquipo) throws Exception;
+    void agregarPosicion(Long idEquipo, String jwtToken, PosicionClienteDTO ubicacion) throws Exception;
 }

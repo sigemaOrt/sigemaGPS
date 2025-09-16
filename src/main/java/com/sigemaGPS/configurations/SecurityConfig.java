@@ -32,7 +32,8 @@ public class SecurityConfig {
                         .allowedOrigins(
                                 "https://sigemabe-d0gke3fdbnfza9et.canadacentral-01.azurewebsites.net",
                                 "https://green-mud-0cddc320f.1.azurestaticapps.net",
-                                "https://gentle-coast-029a3281e.1.azurestaticapps.net"
+                                "https://gentle-coast-029a3281e.1.azurestaticapps.net",
+                                "http://127.0.0.1:4200/"
                         )
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                         .allowedHeaders("*")

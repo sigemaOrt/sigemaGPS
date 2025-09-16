@@ -44,10 +44,24 @@ public class PosicionController {
             HttpServletRequest request) {
         try {
             String jwtToken = getTokenFromRequest(request);
-            ReporteSigemaDTO dto = posicionService.iniciarTrabajo(idEquipo, jwtToken, ubicacion);
-            return ResponseEntity.ok(dto);
+            posicionService.iniciarTrabajo(idEquipo, jwtToken, ubicacion);
+            return ResponseEntity.ok().build();
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error interno al iniciar trabajo: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/agregarPosicion/{idEquipo}")
+    public ResponseEntity<?> agregarPosicion(
+            @PathVariable Long idEquipo,
+            @RequestBody PosicionClienteDTO ubicacion,
+            HttpServletRequest request) {
+        try {
+            String jwtToken = getTokenFromRequest(request);
+            posicionService.agregarPosicion(idEquipo, jwtToken, ubicacion);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Error interno al agregar posicion: " + e.getMessage());
         }
     }
 

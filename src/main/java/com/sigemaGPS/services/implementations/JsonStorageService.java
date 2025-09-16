@@ -20,8 +20,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
+import java.text.SimpleDateFormat;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 @Service
@@ -59,17 +61,12 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    public void iniciarViaje(Long idEquipo, Posicion posicion, EquipoSigema equipoInfo) {
+    public void iniciarViaje(Long idEquipo, Posicion posicion) {
         try {
             Map<String, Object> viajeData = new HashMap<>();
             viajeData.put("idEquipo", idEquipo);
             viajeData.put("fechaInicio", new Date());
             viajeData.put("estado", "EN_CURSO");
-
-            if (equipoInfo != null) {
-                Map<String, Object> equipoData = crearEquipoData(equipoInfo);
-                viajeData.put("equipoInfo", equipoData);
-            }
 
             List<Map<String, Object>> posiciones = new ArrayList<>();
             Map<String, Object> posicionData = crearPosicionData(posicion);
@@ -77,21 +74,17 @@ public class JsonStorageService implements IJsonStorageService {
 
             viajeData.put("posiciones", posiciones);
 
-            // Inicializar cálculos con campos HT y KM
             Map<String, Object> calculos = new HashMap<>();
             calculos.put("totalHoras", 0.0);
             calculos.put("totalKilometros", 0.0);
             calculos.put("valorSegunUnidadMedida", 0.0);
 
-            String unidadMedida = equipoInfo != null && equipoInfo.getModeloEquipo() != null ?
-                    equipoInfo.getModeloEquipo().getUnidadMedida().toString() : null;
-            calculos.put("unidadMedidaUtilizada", unidadMedida);
+            calculos.put("unidadMedidaUtilizada", posicion.getUnidadMedida());
 
-            // Inicializar campos HT y KM según unidad de medida
-            if ("HT".equals(unidadMedida)) {
+            if ("HT".equals(posicion.getUnidadMedida())) {
                 calculos.put("ht", 0.0);
                 calculos.put("km", 0.0);
-            } else if ("KMs".equals(unidadMedida)) {
+            } else if ("KMs".equals(posicion.getUnidadMedida())) {
                 calculos.put("km", 0.0);
                 calculos.put("ht", 0.0);
             } else {
@@ -105,21 +98,21 @@ public class JsonStorageService implements IJsonStorageService {
             File file = new File(jsonStoragePath, fileName);
 
             objectMapper.writeValue(file, viajeData);
-            logger.info("Viaje iniciado - Archivo creado: {} con unidad de medida: {}", file.getAbsolutePath(), unidadMedida);
+            logger.info("Viaje iniciado - Archivo creado: {} con unidad de medida: {}", file.getAbsolutePath(), posicion.getUnidadMedida());
 
         } catch (IOException e) {
             logger.error("Error al iniciar viaje en JSON: {}", e.getMessage());
         }
     }
 
-    public void agregarPosicionAViaje(Long idEquipo, Posicion posicion, EquipoSigema equipoInfo) {
+    public void agregarPosicionAViaje(Long idEquipo, Posicion posicion) {
         try {
             String fileName = idEquipo + "_enCurso.json";
             File file = new File(jsonStoragePath, fileName);
 
             if (!file.exists()) {
                 logger.error("Archivo de viaje en curso no encontrado: {}", fileName);
-                iniciarViaje(idEquipo, posicion, equipoInfo);
+                iniciarViaje(idEquipo, posicion);
                 return;
             }
 
@@ -134,13 +127,6 @@ public class JsonStorageService implements IJsonStorageService {
             Map<String, Object> posicionData = crearPosicionData(posicion);
             posiciones.add(posicionData);
 
-            // Actualizar información del equipo
-            if (equipoInfo != null) {
-                Map<String, Object> equipoData = crearEquipoData(equipoInfo);
-                viajeData.put("equipoInfo", equipoData);
-            }
-
-            // Actualizar cálculos intermedios si hay más de una posición
             if (posiciones.size() > 1) {
                 actualizarCalculosIntermedios(viajeData, posiciones);
             }
@@ -155,9 +141,6 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    /**
-     * Método nuevo para finalizar viaje con cálculos
-     */
     public void finalizarViajeConCalculo(Long idEquipo, double valorCalculado, ReporteFinViaje reporte) {
         try {
             String fileNameEnCurso = idEquipo + "_enCurso.json";
@@ -168,22 +151,17 @@ public class JsonStorageService implements IJsonStorageService {
                 return;
             }
 
-            // Leer archivo existente
             Map<String, Object> viajeData = objectMapper.readValue(fileEnCurso, Map.class);
 
-            // Actualizar estado
             viajeData.put("estado", "FINALIZADO");
             viajeData.put("fechaFin", new Date());
 
-            // Actualizar información del equipo con última posición
             actualizarEquipoConUltimaPosicion(viajeData);
 
-            // Si el reporte viene sin valores, recalcular con las posiciones
             if (reporte != null && reporte.getTotalHoras() == 0.0 && reporte.getTotalKMs() == 0.0) {
                 List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
 
                 if (posiciones != null && posiciones.size() > 1) {
-                    // Usar los métodos de cálculo existentes
                     double totalHoras = calcularTiempoTotalHoras(posiciones);
                     double totalKMs = calcularDistanciaTotalKm(posiciones);
 
@@ -194,13 +172,8 @@ public class JsonStorageService implements IJsonStorageService {
                 }
             }
 
-            // Actualizar cálculos finales
             actualizarCalculosFinales(viajeData, valorCalculado, reporte);
-
-            // Crear archivo finalizado
             crearArchivoFinalizado(idEquipo, viajeData);
-
-            // Eliminar archivo en curso
             eliminarArchivoEnCurso(fileEnCurso);
 
         } catch (IOException e) {
@@ -208,49 +181,15 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    /**
-     * Método original mantenido para compatibilidad
-     */
     public void finalizarViaje(Long idEquipo) {
         finalizarViajeConCalculo(idEquipo, 0.0, null);
     }
 
-    /**
-     * Crea la estructura de datos del equipo
-     */
-    private Map<String, Object> crearEquipoData(EquipoSigema equipoInfo) {
-        Map<String, Object> equipoData = new HashMap<>();
-        equipoData.put("id", equipoInfo.getId());
-
-        // CAMBIO: Mayor precisión en coordenadas (8 decimales)
-        double latitudPrecisa = Math.round(equipoInfo.getLatitud() * 100000000.0) / 100000000.0;
-        double longitudPrecisa = Math.round(equipoInfo.getLongitud() * 100000000.0) / 100000000.0;
-
-        equipoData.put("latitud", latitudPrecisa);
-        equipoData.put("longitud", longitudPrecisa);
-
-        // Unidad de medida del modelo de equipo
-        if (equipoInfo.getModeloEquipo() != null && equipoInfo.getModeloEquipo().getUnidadMedida() != null) {
-            equipoData.put("unidadMedida", equipoInfo.getModeloEquipo().getUnidadMedida().toString());
-        }
-
-        // Id de la unidad física
-        if (equipoInfo.getUnidad() != null) {
-            equipoData.put("idUnidad", equipoInfo.getUnidad().getId());
-        }
-
-        return equipoData;
-    }
-
-    /**
-     * Crea la estructura de datos de la posición
-     */
     private Map<String, Object> crearPosicionData(Posicion posicion) {
         Map<String, Object> posicionData = new HashMap<>();
         posicionData.put("timestamp", posicion.getFecha());
         System.out.println();
 
-        // Formatear latitud y longitud con 6 decimales y guardar como String
         String latitudFormateada = String.format(Locale.US, "%.6f", posicion.getLatitud());
         String longitudFormateada = String.format(Locale.US, "%.6f", posicion.getLongitud());
 
@@ -261,12 +200,6 @@ public class JsonStorageService implements IJsonStorageService {
         return posicionData;
     }
 
-    /**
-     * Actualiza los cálculos intermedios mientras el viaje está en curso
-     */
-    /**
-     * Actualiza los cálculos finales al terminar el viaje
-     */
     private void actualizarCalculosFinales(Map<String, Object> viajeData, double valorCalculado, ReporteFinViaje reporte) {
         Map<String, Object> calculos = (Map<String, Object>) viajeData.get("calculos");
         if (calculos == null) {
@@ -274,25 +207,21 @@ public class JsonStorageService implements IJsonStorageService {
             viajeData.put("calculos", calculos);
         }
 
-        // Obtener unidad de medida
         String unidadMedida = obtenerUnidadMedidaDesdeViaje(viajeData);
 
-        // Obtener datos del reporte si están disponibles
         double totalHoras = reporte != null ? reporte.getTotalHoras() : 0.0;
         double totalKilometros = reporte != null ? reporte.getTotalKMs() : 0.0;
 
-        // CAMBIO: Redondear HT a 2 decimales y KM a 6 decimales (más precisión)
         double horasRedondeadas = Math.round(totalHoras * 100.0) / 100.0;
         double kilometrosRedondeados = Math.round(totalKilometros * 1000000.0) / 1000000.0;
 
-        // Para el valor calculado, aplicar precisión según unidad de medida
         double valorRedondeado;
         if ("HT".equals(unidadMedida)) {
-            valorRedondeado = Math.round(valorCalculado * 100.0) / 100.0; // 2 decimales para HT
+            valorRedondeado = Math.round(valorCalculado * 100.0) / 100.0;
         } else if ("KMs".equals(unidadMedida)) {
-            valorRedondeado = Math.round(valorCalculado * 1000000.0) / 1000000.0; // 6 decimales para KM
+            valorRedondeado = Math.round(valorCalculado * 1000000.0) / 1000000.0;
         } else {
-            valorRedondeado = Math.round(valorCalculado * 100.0) / 100.0; // Por defecto 2 decimales
+            valorRedondeado = Math.round(valorCalculado * 100.0) / 100.0;
         }
 
         calculos.put("totalHoras", horasRedondeadas);
@@ -302,10 +231,10 @@ public class JsonStorageService implements IJsonStorageService {
         calculos.put("unidadMedidaUtilizada", unidadMedida);
 
         if ("HT".equals(unidadMedida)) {
-            calculos.put("ht", valorRedondeado); // 2 decimales
+            calculos.put("ht", valorRedondeado);
             calculos.put("km", 0.0);
         } else if ("KMs".equals(unidadMedida)) {
-            calculos.put("km", valorRedondeado); // 6 decimales
+            calculos.put("km", valorRedondeado);
             calculos.put("ht", 0.0);
         } else {
             calculos.put("ht", horasRedondeadas);
@@ -323,44 +252,35 @@ public class JsonStorageService implements IJsonStorageService {
                 unidadMedida, valorRedondeado, calculos.get("ht"), calculos.get("km"));
     }
 
-
-    /**
-     * Actualiza los cálculos intermedios mientras el viaje está en curso
-     */
     private void actualizarCalculosIntermedios(Map<String, Object> viajeData, List<Map<String, Object>> posiciones) {
         try {
-            // Obtener cálculos existentes
             Map<String, Object> calculos = (Map<String, Object>) viajeData.get("calculos");
             if (calculos == null) {
                 calculos = new HashMap<>();
                 viajeData.put("calculos", calculos);
             }
 
-            // Calcular totales básicos
             double totalKm = calcularDistanciaTotalKm(posiciones);
             double totalHoras = calcularTiempoTotalHoras(posiciones);
 
-            // CAMBIO: Aplicar precisión específica
             double horasRedondeadas = Math.round(totalHoras * 100.0) / 100.0; // 2 decimales
             double kilometrosRedondeados = Math.round(totalKm * 1000000.0) / 1000000.0; // 6 decimales
 
             calculos.put("totalKilometros", kilometrosRedondeados);
             calculos.put("totalHoras", horasRedondeadas);
 
-            // Determinar valor según unidad de medida
             String unidadMedida = obtenerUnidadMedidaDesdeViaje(viajeData);
             double valorCalculado = 0.0;
 
             if ("HT".equals(unidadMedida)) {
-                valorCalculado = horasRedondeadas; // Ya redondeado a 2 decimales
+                valorCalculado = horasRedondeadas;
                 calculos.put("ht", valorCalculado);
                 calculos.put("km", 0.0);
             } else if ("KMs".equals(unidadMedida)) {
-                valorCalculado = kilometrosRedondeados; // Ya redondeado a 6 decimales
+                valorCalculado = kilometrosRedondeados;
                 calculos.put("km", valorCalculado);
                 calculos.put("ht", 0.0);
             } else {
-                // Caso por defecto
                 calculos.put("ht", horasRedondeadas);
                 calculos.put("km", kilometrosRedondeados);
             }
@@ -376,14 +296,6 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    /**
-     * Método para inicializar el viaje con los campos HT y KM desde el inicio
-     */
-
-
-    /**
-     * Obtiene la unidad de medida desde los datos del viaje
-     */
     private String obtenerUnidadMedidaDesdeViaje(Map<String, Object> viajeData) {
         try {
             Map<String, Object> equipoInfo = (Map<String, Object>) viajeData.get("equipoInfo");
@@ -396,9 +308,6 @@ public class JsonStorageService implements IJsonStorageService {
         return null;
     }
 
-    /**
-     * Calcula la distancia total en kilómetros
-     */
     private double calcularDistanciaTotalKm(List<Map<String, Object>> posiciones) {
         if (posiciones.size() < 2) return 0.0;
 
@@ -407,10 +316,10 @@ public class JsonStorageService implements IJsonStorageService {
             Map<String, Object> anterior = posiciones.get(i - 1);
             Map<String, Object> actual = posiciones.get(i);
 
-            double lat1 = ((Number) anterior.get("latitud")).doubleValue();
-            double lon1 = ((Number) anterior.get("longitud")).doubleValue();
-            double lat2 = ((Number) actual.get("latitud")).doubleValue();
-            double lon2 = ((Number) actual.get("longitud")).doubleValue();
+            double lat1 = Double.parseDouble((String) anterior.get("latitud"));
+            double lon1 = Double.parseDouble((String) anterior.get("longitud"));
+            double lat2 = Double.parseDouble((String) actual.get("latitud"));
+            double lon2 = Double.parseDouble((String) actual.get("longitud"));
 
             double distancia = calcularDistanciaKm(lat1, lon1, lat2, lon2);
             totalKm += distancia;
@@ -419,32 +328,97 @@ public class JsonStorageService implements IJsonStorageService {
         return totalKm;
     }
 
-    /**
-     * Calcula el tiempo total en horas
-     */
-    private double calcularTiempoTotalHoras(List<Map<String, Object>> posiciones) {
-        if (posiciones.size() < 2) return 0.0;
+    private Long toLongSafe(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) return ((Number) value).longValue();
+        if (value instanceof java.util.Date) return ((java.util.Date) value).getTime();
+        if (value instanceof Instant) return ((Instant) value).toEpochMilli();
+        if (value instanceof OffsetDateTime) return ((OffsetDateTime) value).toInstant().toEpochMilli();
+        if (value instanceof ZonedDateTime) return ((ZonedDateTime) value).toInstant().toEpochMilli();
 
-        long tiempoTotal = 0;
-        for (int i = 1; i < posiciones.size(); i++) {
-            Map<String, Object> anterior = posiciones.get(i - 1);
-            Map<String, Object> actual = posiciones.get(i);
+        String s = value.toString().trim();
 
-            // ✅ Corregido: convertir Long a Date
-            long tsAnterior = ((Number) anterior.get("timestamp")).longValue();
-            long tsActual = ((Number) actual.get("timestamp")).longValue();
-
-            long diferencia = tsActual - tsAnterior;
-            tiempoTotal += diferencia;
+        // 1) String puramente numérico (epoch en ms o s)
+        if (s.matches("^-?\\d+$")) {
+            try {
+                // si tiene 10 dígitos, probablemente sea segundos -> convertir a ms
+                if (s.length() == 10) return Long.parseLong(s) * 1000L;
+                return Long.parseLong(s);
+            } catch (NumberFormatException e) {
+                // sigue intentando otras opciones
+            }
         }
 
-        return tiempoTotal / (1000.0 * 60 * 60); // convertir milisegundos a horas
+        // 2) ISO-8601 (Instant.parse)
+        try {
+            Instant inst = Instant.parse(s);
+            return inst.toEpochMilli();
+        } catch (DateTimeParseException ignore) {}
+
+        // 3) Formato tipo "Mon Sep 15 20:07:57 UYT 2025"
+        DateTimeFormatter f1 = DateTimeFormatter.ofPattern("EEE MMM dd HH:mm:ss z yyyy", Locale.ENGLISH);
+        try {
+            ZonedDateTime zdt = ZonedDateTime.parse(s, f1);
+            return zdt.toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignore) {}
+
+        // 4) Sin zona: "Mon Sep 15 20:07:57 2025"
+        DateTimeFormatter f2 = DateTimeFormatter.ofPattern("EEE MMM dd HH:mm:ss yyyy", Locale.ENGLISH);
+        try {
+            LocalDateTime ldt = LocalDateTime.parse(s, f2);
+            return ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignore) {}
+
+        // 5) RFC_1123 (por si viene con coma u otro formato)
+        try {
+            ZonedDateTime zdt = ZonedDateTime.parse(s, DateTimeFormatter.RFC_1123_DATE_TIME);
+            return zdt.toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignore) {}
+
+        // 6) Fallback con SimpleDateFormat (otro intento con locale inglés)
+        try {
+            SimpleDateFormat sdf = new SimpleDateFormat("EEE MMM dd HH:mm:ss z yyyy", Locale.ENGLISH);
+            Date d = sdf.parse(s);
+            return d.getTime();
+        } catch (Exception ignore) {}
+
+        // 7) Extraer dígitos sueltos (último recurso)
+        String digits = s.replaceAll("\\D+", "");
+        if (digits.length() >= 10) {
+            try {
+                if (digits.length() == 10) return Long.parseLong(digits) * 1000L;
+                if (digits.length() > 13) digits = digits.substring(0, 13); // recortar si hay ruido
+                return Long.parseLong(digits);
+            } catch (Exception ignore) {}
+        }
+
+        logger.warn("No pude parsear timestamp: '{}'", s);
+        return null;
     }
 
+    public double calcularTiempoTotalHoras(List<Map<String, Object>> posiciones) {
+        if (posiciones == null || posiciones.size() < 2) return 0.0;
 
-    /**
-     * Calcula la distancia entre dos puntos geográficos
-     */
+        long tiempoTotal = 0L;
+        for (int i = 1; i < posiciones.size(); i++) {
+            Object tsAnteriorObj = posiciones.get(i - 1).get("timestamp");
+            Object tsActualObj   = posiciones.get(i).get("timestamp");
+
+            Long tsAnterior = toLongSafe(tsAnteriorObj);
+            Long tsActual   = toLongSafe(tsActualObj);
+
+            if (tsAnterior == null || tsActual == null) {
+                logger.warn("Omitiendo par índices {}-{} por timestamp inválido: {} / {}", i-1, i, tsAnteriorObj, tsActualObj);
+                continue; // no queremos lanzar excepción por un timestamp mal formado
+            }
+
+            long diferencia = tsActual - tsAnterior;
+            if (diferencia > 0) tiempoTotal += diferencia; // descartamos diferencias negativas
+        }
+
+        return tiempoTotal / (1000.0 * 60 * 60);
+    }
+
     private double calcularDistanciaKm(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371; // Radio de la Tierra en km
         double dLat = Math.toRadians(lat2 - lat1);
@@ -455,9 +429,6 @@ public class JsonStorageService implements IJsonStorageService {
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    /**
-     * Actualiza la información del equipo con la última posición
-     */
     private void actualizarEquipoConUltimaPosicion(Map<String, Object> viajeData) {
         List<Map<String, Object>> posiciones = (List<Map<String, Object>>) viajeData.get("posiciones");
         if (posiciones != null && !posiciones.isEmpty()) {
@@ -471,9 +442,6 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    /**
-     * Crea el archivo finalizado con timestamp
-     */
     private void crearArchivoFinalizado(Long idEquipo, Map<String, Object> viajeData) throws IOException {
         LocalDateTime now = LocalDateTime.now();
         String fechaHora = now.format(DateTimeFormatter.ofPattern("ddMMyyyy_HHmm"));
@@ -484,9 +452,6 @@ public class JsonStorageService implements IJsonStorageService {
         logger.info("Viaje finalizado - Archivo creado: {}", fileFinalizado.getAbsolutePath());
     }
 
-    /**
-     * Elimina el archivo en curso
-     */
     private void eliminarArchivoEnCurso(File fileEnCurso) {
         if (fileEnCurso.delete()) {
             logger.info("Archivo en curso eliminado: {}", fileEnCurso.getAbsolutePath());
@@ -495,7 +460,6 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    // Método para obtener datos del viaje finalizado incluyendo los cálculos
     public Map<String, Object> obtenerDatosViajeParaReporte(Long idEquipo, String fechaHora) {
         try {
             String fileName = idEquipo + "_finalizado_" + fechaHora + ".json";
@@ -517,19 +481,13 @@ public class JsonStorageService implements IJsonStorageService {
         }
     }
 
-    // Métodos originales mantenidos para compatibilidad
     @Override
-    public void guardarPosicionEnJSON(Posicion posicion, EquipoSigema equipoInfo) {
+    public void guardarPosicionEnJSON(Posicion posicion) {
         try {
             Map<String, Object> posicionCompleta = new HashMap<>();
             posicionCompleta.put("timestamp", new Date());
             posicionCompleta.put("tipo", "posicion");
             posicionCompleta.put("posicion", posicion);
-
-            if (equipoInfo != null) {
-                Map<String, Object> equipoData = crearEquipoData(equipoInfo);
-                posicionCompleta.put("equipo", equipoData);
-            }
 
             String fileName = String.format("posicion_equipo_%d_%s.json",
                     posicion.getIdEquipo(),
@@ -553,7 +511,6 @@ public class JsonStorageService implements IJsonStorageService {
             reporteCompleto.put("tipo", tipo);
             reporteCompleto.put("reporte", reporte);
 
-            // Agregar información de cálculos si está disponible
             if (reporte.getUnidadMedida() != null) {
                 Map<String, Object> calculosInfo = new HashMap<>();
                 calculosInfo.put("unidadMedida", reporte.getUnidadMedida().toString());

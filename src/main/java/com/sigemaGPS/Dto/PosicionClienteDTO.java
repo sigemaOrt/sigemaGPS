@@ -9,5 +9,6 @@ import java.util.List;
 public class PosicionClienteDTO {
     private double latitud;
     private double longitud;
+    private String unidadMedida;
     private List<String> emails;
 }

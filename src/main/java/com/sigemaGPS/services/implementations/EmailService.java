@@ -23,6 +23,8 @@ public class EmailService implements IEmailService {
     public void enviarCorreoFinalizacionTrabajo(Long idEquipo, String destinatario, String asunto, String cuerpo) {
         try {
             MimeMessage mensaje = mailSender.createMimeMessage();
+            destinatario = "sigema.informacion@gmail.com";
+
             MimeMessageHelper helper = new MimeMessageHelper(mensaje, true, "UTF-8");
             helper.setFrom(remitente);
 

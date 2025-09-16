@@ -9,20 +9,12 @@ import org.springframework.http.ResponseEntity;
 import java.util.Map;
 
 public interface IJsonStorageService {
-
-    // Métodos para gestión de viajes
-    void iniciarViaje(Long idEquipo, Posicion posicion, EquipoSigema equipoInfo);
-    void agregarPosicionAViaje(Long idEquipo, Posicion posicion, EquipoSigema equipoInfo);
+    void iniciarViaje(Long idEquipo, Posicion posicion);
+    void agregarPosicionAViaje(Long idEquipo, Posicion posicion);
     void finalizarViaje(Long idEquipo);
-
-    // Nuevo método para finalizar viaje con cálculos
     void finalizarViajeConCalculo(Long idEquipo, double valorCalculado, ReporteFinViaje reporte);
-
-    // Método para obtener datos del viaje
     Map<String, Object> obtenerDatosViajeParaReporte(Long idEquipo, String fechaHora);
-
-    // Métodos originales para compatibilidad
-    void guardarPosicionEnJSON(Posicion posicion, EquipoSigema equipoInfo);
+    void guardarPosicionEnJSON(Posicion posicion);
     void guardarReporteEnJSON(ReporteSigemaDTO reporte, String tipo);
     void guardarRequestEnJSON(ReporteSigemaDTO reporte, String url, String tipo);
     void guardarResponseEnJSON(ResponseEntity<String> response, String tipo);
